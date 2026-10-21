@@ -29,12 +29,15 @@ test('フリーメールは顧客判定に使わず、複数顧客は自動確�
   assert.equal(rules.classify([{ email: 'person@gmail.com' }], m).client, null);
   assert.equal(rules.classify([{ email: 'a@sample-shoji.example' }, { email: 'b@other.example' }], m).ambiguous_client, true);
 });
-test('機密・顧客食い違い・参加者不足・未登録PJを仕分け待ちにします', () => {
+test('機密・顧客食い違い・参加者不足を仕分け待ちにし、未登録PJは除外します', () => {
   assert.equal(rules.placementPlan(judgement, manifest, masters, []).status, '確認待ち');
-  for (const j of [{ ...judgement, sensitive: true }, { ...judgement, scope: '社内', placement: '社内/EC' },
-    { ...judgement, related_project_ids: ['unregistered'] }]) {
+  for (const j of [{ ...judgement, sensitive: true }, { ...judgement, scope: '社内', placement: '社内/EC' }]) {
     assert.equal(rules.placementPlan(j, manifest, masters, []).status, '仕分け待ち');
   }
+  const unknownProject = rules.placementPlan({ ...judgement, related_project_ids: ['unregistered'] }, manifest, masters, []);
+  assert.equal(unknownProject.status, '確認待ち');
+  assert.equal(unknownProject.related_project_ids.length, 0);
+  assert.equal(unknownProject.rejected_project_ids[0], 'unregistered');
   assert.equal(rules.placementPlan(judgement, { ...manifest, attendees: [] }, masters, []).status, '仕分け待ち');
   assert.throws(() => rules.placementPlan(judgement, { ...manifest, meeting_key: 'different' }, masters, []), /一致しません/);
 });

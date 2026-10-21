@@ -1,5 +1,7 @@
 # 開発・接続確認
 
+テストDB作成後の接続確認・Notionサンプル取り込みは [Notion検証手順](NOTION_FIXTURE_TEST.md) を参照してください。
+
 テスト用Notion DBがまだない場合は、先に [テストDB初期作成手順](SETUP_TEST_DATABASES.md) を使います。
 ポータルページ `3edca178-7419-808a-9039-d502914f7603` はDBではありません。
 

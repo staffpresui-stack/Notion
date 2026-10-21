@@ -14,6 +14,8 @@
 
 ## 最新のユーザー指定（元の設計より優先）
 
+- テストDB初期作成はユーザー側で成功報告済み。今回の接続確認とNotionサンプル検証の手順は `docs/NOTION_FIXTURE_TEST.md`。`ingestFixturesToNotionTest()` に限り、ENV=test、確認済みテストID、DRY_RUN=falseでサンプルページ作成を許可する。GAS実行・実Notion書き込みはユーザーが行う。Drive・Chatwork・タスク提案の書き込みは禁止。通常処理のDRY_RUN制約は維持する。
+
 - ユーザーがテストDB初期作成関数の実装を明示依頼済み。`setupTestDatabases()` は `ENV=test` と `SETUP_CREATE_TEST_DB=true` で管理ページ下への初期作成を許可する専用機能です。この関数はDRY_RUN=trueでもテストDBを実作成します。GAS実行とNotionへの書き込みはユーザーが行います。Codex側では実行しません。通常処理のDRY_RUN制約は維持します。手順は `docs/SETUP_TEST_DATABASES.md`。
 
 - GAS-A・GAS-Bの作成・所有・clasp認証は `staff.presui@gmail.com` を使います。Notion・ChatGPT・tl;dv・Chatworkのアカウント変更は指示されていません。

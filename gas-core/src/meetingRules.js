@@ -47,7 +47,7 @@ var MeetingRules_ = (function () {
     var rejectedDomains = judgement.domains.filter(function (d) { return !domains.includes(d); });
     var projectIds = new Set((projects || []).map(function (p) { return p.id; }));
     var rejectedProjects = judgement.related_project_ids.filter(function (id) { return !projectIds.has(id); });
-    if (rejectedProjects.length) conflicts.push('関連プロジェクトがマスタに登録されていません。');
+    // 未登録PJは除外して記録します。SPEC 8章の格納先の食い違いとは区別します。
     var automatic = judgement.confidence === '高' && judgement.sensitive === false && conflicts.length === 0;
     return { meeting_key: manifest.meeting_key, status: automatic ? '確認待ち' : '仕分け待ち',
       placement: automatic ? judgement.placement : '00_仕分け待ち', rule: rule, conflicts: conflicts,

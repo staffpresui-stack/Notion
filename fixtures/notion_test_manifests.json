@@ -1,0 +1,47 @@
+{
+  "note": "未提供だった社内会議とtl;dv会議のmanifestをサンプル検証用に補完したものです。実会議データではありません。",
+  "manifests": [
+    {
+      "meeting_key": "meet:test001_20261021T020000Z",
+      "source": "meet",
+      "event_id": "test001_20261021T020000Z",
+      "title": "議事録運用 打ち合わせ",
+      "start": "2026-10-21T11:00:00+09:00",
+      "end": "2026-10-21T12:00:00+09:00",
+      "organizer_email": "test.taro@premiere-mode.co.jp",
+      "attendees": [
+        {
+          "email": "test.taro@premiere-mode.co.jp",
+          "name": "テスト 太郎"
+        },
+        {
+          "email": "test.hanako@premiere-mode.co.jp",
+          "name": "テスト 花子"
+        }
+      ],
+      "meet_url": "https://meet.google.com/aaa-bbbb-ccc",
+      "files": {},
+      "missing": [],
+      "status": "ready",
+      "created_at": "2026-10-21T12:25:00+09:00"
+    },
+    {
+      "meeting_key": "tldv:tldvtest003",
+      "source": "tldv",
+      "title": "新規取引の相談",
+      "start": "2026-10-21T16:00:00+09:00",
+      "end": "2026-10-21T16:40:00+09:00",
+      "attendees": [
+        {
+          "email": "test.taro@premiere-mode.co.jp",
+          "name": "テスト 太郎"
+        },
+        {
+          "name": "先方担当"
+        }
+      ],
+      "files": {},
+      "status": "ready"
+    }
+  ]
+}

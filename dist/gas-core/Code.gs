@@ -83,6 +83,59 @@ var DriveUtil_ = (function () {
 })();
 
 
+// ingestFixturesToNotionTest.js
+function ingestFixturesToNotionTest() {
+  var env = NotionTestEnvironment_.open(true), lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) throw new Error('別のサンプル取り込みが実行中です。');
+  try {
+    var minutes = env.schema(env.ids.minutes, 'minutes'), tasks = env.schema(env.ids.tasks, 'tasks');
+    var results = [], verifiedProjects = [], requested = new Set();
+    NotionFixtures_.judgements.forEach(function (j) { j.related_project_ids.forEach(function (id) { requested.add(id); }); });
+    requested.forEach(function (id) { var found = env.project(id); if (found) verifiedProjects.push(found); });
+    // 作成前に3件すべてのペイロードを検査します。
+    var plans = NotionFixtures_.judgements.map(function (j) {
+      var manifest = NotionFixtures_.manifests.find(function (m) { return m.meeting_key === j.meeting_key; });
+      if (!manifest) throw new Error('サンプルのmanifestがありません: ' + j.meeting_key);
+      return { meetingKey: j.meeting_key, plan: NotionFixturePlan_.plan(j, manifest, NotionFixtures_.masters, minutes, tasks, verifiedProjects) };
+    });
+    plans.forEach(function (item) {
+      var key = 'NOTION_FIXTURE:' + NotionTestEnvironment_.normalize(minutes.databaseId) + ':' + item.meetingKey;
+      var saved = env.properties.getProperty(key), plan = item.plan;
+      console.log('判定: ' + item.meetingKey + ' / ' + JSON.stringify(plan.placement));
+      plan.warnings.forEach(function (w) { console.log(w); });
+      console.log('タスク提案（書き込まない）: ' + JSON.stringify(plan.taskProposals));
+      if (saved) {
+        var record;
+        try { record = JSON.parse(saved); } catch (e) { throw new Error('重複防止記録が不正です。削除せず確認してください: ' + key); }
+        var status = record.state === 'created' && record.pageId ? '作成済み・スキップ' : '作成結果未確認・再作成しません';
+        console.log(status + ': ' + item.meetingKey + ' / ' + (record.pageId || '実Notionを確認してください。'));
+        results.push({ meeting_key: item.meetingKey, status: status, pageId: record.pageId || null });
+        return;
+      }
+      if (env.dryRun) {
+        console.log('DRY_RUN・送信予定: ' + JSON.stringify(plan.payload));
+        results.push({ meeting_key: item.meetingKey, status: plan.placement.status, dryRun: true });
+        return;
+      }
+      // POST直前に予約を保存。通信中断やID保存失敗後も自動で二重作成しません。
+      env.properties.setProperty(key, JSON.stringify({ state: 'pending' }));
+      try {
+        var page = env.createPage(plan.payload);
+        if (!page.id) throw new Error('作成結果にページIDがありません。');
+        console.log('作成したページID: ' + item.meetingKey + ' / ' + page.id);
+        env.properties.setProperty(key, JSON.stringify({ state: 'created', pageId: page.id }));
+        results.push({ meeting_key: item.meetingKey, status: plan.placement.status, pageId: page.id });
+      } catch (e) {
+        console.log('作成結果を確認してください。自動再作成しません: ' + item.meetingKey + ' / ' + e.message);
+        results.push({ meeting_key: item.meetingKey, status: '要対応', error: e.message });
+      }
+    });
+    console.log('サンプル取り込み結果: ' + JSON.stringify(results));
+    return results;
+  } finally { lock.releaseLock(); }
+}
+
+
 // ledger.js
 var Ledger_ = (function () {
   var headers = {
@@ -177,7 +230,7 @@ var MeetingRules_ = (function () {
     var rejectedDomains = judgement.domains.filter(function (d) { return !domains.includes(d); });
     var projectIds = new Set((projects || []).map(function (p) { return p.id; }));
     var rejectedProjects = judgement.related_project_ids.filter(function (id) { return !projectIds.has(id); });
-    if (rejectedProjects.length) conflicts.push('関連プロジェクトがマスタに登録されていません。');
+    // 未登録PJは除外して記録します。SPEC 8章の格納先の食い違いとは区別します。
     var automatic = judgement.confidence === '高' && judgement.sensitive === false && conflicts.length === 0;
     return { meeting_key: manifest.meeting_key, status: automatic ? '確認待ち' : '仕分け待ち',
       placement: automatic ? judgement.placement : '00_仕分け待ち', rule: rule, conflicts: conflicts,
@@ -230,6 +283,453 @@ var Notion_ = (function () {
   }
   return { schema: schema };
 })();
+
+
+// notionFixturePlan.js
+var NotionFixturePlan_ = (function () {
+  function normalize(value) { return String(value || '').replace(/-/g, '').toLowerCase(); }
+  var domains = ['セールス・マーケ', 'EC', '生産管理', '経理・バックオフィス', 'Salesforce・AI', '経営'];
+  var expected = {
+    minutes: { '議事録名': ['title'], '日付': ['date'], '参加者': ['people'], 'MTG URL': ['url'], '事業部領域': ['multi_select'], '関連するプロジェクト': ['relation'] },
+    tasks: { 'プロジェクト/タスク名': ['title'], 'ステータス': ['status', 'select'], '期日': ['date'], '担当者': ['people'], '備考': ['rich_text'], '完了条件': ['rich_text'], '事業部領域': ['multi_select'], '関連するMTG': ['relation'], '親アイテム': ['relation'] },
+    // タイトル名や参加者形式は実機確認対象です。本文の文字起こしも許容します。
+    inbox: { '取り込み状態': ['select'], 'meeting_key': ['rich_text'], '日付': ['date'], '会議URL': ['url'], '長さ': ['number', 'rich_text'], '参加者': ['rich_text', 'people', 'multi_select'], 'AIメモ': ['rich_text'], 'トランスクリプト': ['rich_text'] }
+  };
+  function compareSchema(key, properties) {
+    var differences = [], wanted = expected[key];
+    Object.keys(wanted).forEach(function (name) {
+      var p = properties[name], optionalBody = key === 'inbox' && ['AIメモ', 'トランスクリプト'].includes(name);
+      if (!p || !wanted[name].includes(p.type)) differences.push({ kind: optionalBody ? '本文での提供可・要確認' : '項目名・型', name: name, expected: wanted[name], actual: p ? p.type : '未設定' });
+    });
+    Object.keys(properties).filter(function (name) { return !wanted[name] && !(key === 'inbox' && properties[name].type === 'title'); }).forEach(function (name) {
+      differences.push({ kind: key === 'tasks' && name === '依頼者' ? 'SPECで型未決定' : '追加項目', name: name, actual: properties[name].type });
+    });
+    if (key === 'inbox' && !Object.keys(properties).some(function (n) { return properties[n].type === 'title'; })) differences.push({ kind: '項目名・型', name: 'タイトル', expected: ['title'], actual: '未設定' });
+    function options(name, values) {
+      var p = properties[name];
+      if (!p || !['select', 'multi_select', 'status'].includes(p.type)) return;
+      var actual = ((p[p.type] || {}).options || []).map(function (o) { return o.name; });
+      var missing = values.filter(function (v) { return !actual.includes(v); });
+      var extra = actual.filter(function (v) { return !values.includes(v); });
+      if (missing.length || extra.length) differences.push({ kind: '選択肢', name: name, missing: missing, extra: extra });
+    }
+    if (key !== 'inbox') options('事業部領域', domains);
+    if (key === 'tasks') options('ステータス', ['未着手', '保留', '進行中', '対応不要', '完了']);
+    if (key === 'inbox') options('取り込み状態', ['未処理', '取り込み済み', '対象外（Meet優先）', 'エラー']);
+    return { properties: Object.keys(properties).map(function (n) { return { name: n, type: properties[n].type }; }), differences: differences };
+  }
+  function clean(value) { return String(value || '').replace(/https?:\/\/[^\s<>]+/gi, '（URL省略）'); }
+  function richText(value) {
+    var chars = Array.from(clean(value)), result = [];
+    for (var i = 0; i < chars.length; i += 1000) result.push({ type: 'text', text: { content: chars.slice(i, i + 1000).join('') } });
+    if (result.length > 100) throw new Error('テスト本文が長すぎます。');
+    return result;
+  }
+  function block(type, value) { var b = { object: 'block', type: type }; b[type] = { rich_text: richText(value) }; return b; }
+  function plan(judgement, manifest, masters, minutes, tasks, projectIds) {
+    var comparison = compareSchema('minutes', minutes.properties);
+    if (comparison.differences.some(function (d) { return d.kind === '項目名・型'; })) throw new Error('議事録DBの項目名・型がSPECと異なります。checkTestEnvironmentで確認してください。');
+    var relation = minutes.properties['関連するプロジェクト'].relation || {};
+    if (normalize(relation.data_source_id) !== normalize(tasks.sourceId)) throw new Error('関連するプロジェクトがテスト用タスクDBを参照していません。');
+    if (!Number.isFinite(Date.parse(manifest.start))) throw new Error('会議の開始日時が不正です。');
+    if (judgement.minutes_title.length > 2000) throw new Error('議事録名が長すぎます。');
+    var projects = projectIds.map(function (id) { return { id: id }; });
+    var placement = MeetingRules_.placementPlan(judgement, manifest, masters, projects);
+    var warnings = [], choices = (minutes.properties['事業部領域'].multi_select.options || []).map(function (o) { return o.name; });
+    var selected = placement.domains.filter(function (d) { return choices.includes(d); });
+    var rejected = placement.domains.filter(function (d) { return !choices.includes(d); }).concat(placement.rejected_domains);
+    if (rejected.length) warnings.push('送信しない事業部領域: ' + rejected.join('、'));
+    if (placement.rejected_project_ids.length) warnings.push('テストDBに存在しない、または参照不可のため送信しない関連PJ: ' + placement.rejected_project_ids.join('、'));
+    var participants = manifest.attendees || [];
+    var people = (masters.people || []).filter(function (person) {
+      return person.notion_user_id && participants.some(function (a) { return a.email && a.email.toLowerCase() === String(person.google_email || '').toLowerCase(); });
+    }).map(function (person) { return { object: 'user', id: person.notion_user_id }; });
+    var properties = {
+      '議事録名': { title: richText(judgement.minutes_title) }, '日付': { date: { start: manifest.start } },
+      '参加者': { people: people }, 'MTG URL': { url: null },
+      '事業部領域': { multi_select: selected.map(function (name) { return { name: name }; }) },
+      '関連するプロジェクト': { relation: placement.related_project_ids.map(function (id) { return { id: id }; }) }
+    };
+    var children = [block('heading_2', '基本情報'), block('paragraph', '日時：' + manifest.start),
+      block('paragraph', '参加者：' + participants.map(function (a) { return a.name || a.email || '要確認'; }).join('、')),
+      block('paragraph', '記録元：' + (manifest.source === 'meet' ? 'Meet' : 'tl;dv')),
+      block('heading_2', '決定事項')];
+    judgement.summary.decisions.forEach(function (text) { children.push(block('bulleted_list_item', text)); });
+    if (!judgement.summary.decisions.length) children.push(block('paragraph', '決定事項はありません。'));
+    children.push(block('heading_2', 'ネクストアクション'));
+    judgement.summary.next_actions.forEach(function (a) { children.push(block('bulleted_list_item', a.who + '／' + a.what + '／期日：' + (a.due || '要確認'))); });
+    if (!judgement.summary.next_actions.length) children.push(block('paragraph', 'ネクストアクションはありません。'));
+    if (children.length > 100) throw new Error('本文が100ブロックを超えます。');
+    return { placement: placement, warnings: warnings, payload: { parent: { type: 'data_source_id', data_source_id: minutes.sourceId }, properties: properties, children: children }, taskProposals: judgement.task_proposals };
+  }
+  return { compareSchema: compareSchema, plan: plan };
+})();
+
+
+// notionFixtures.generated.js
+// scripts/bundle.cjs でfixturesから生成します。手で変更しないでください。
+var NotionFixtures_ = {
+  "judgements": [
+    {
+      "meeting_key": "meet:test001_20261021T020000Z",
+      "source": "meet",
+      "scope": "社内",
+      "placement": "社内/Salesforce・AI",
+      "domains": [
+        "Salesforce・AI"
+      ],
+      "related_project_ids": [
+        "00000000-0000-0000-0000-000000000001"
+      ],
+      "minutes_title": "2026-10-21 議事録運用 打ち合わせ",
+      "minutes_doc_id": "DOC_ID_TEST_001",
+      "minutes_markdown": null,
+      "confidence": "高",
+      "reason": "参加者が全員社内で、議題が議事録自動化の運用設計だった",
+      "sensitive": false,
+      "summary": {
+        "decisions": [
+          "録画は Google Meet を優先し、相手主催の会議だけ tl;dv を使う"
+        ],
+        "next_actions": [
+          {
+            "who": "テスト 太郎",
+            "what": "共有ドライブ「MTG記録」を作成する",
+            "due": "2026-10-23"
+          }
+        ]
+      },
+      "task_proposals": [
+        {
+          "type": "新規",
+          "task_db": "プロジェクト",
+          "target_id": null,
+          "title": "共有ドライブ「MTG記録」を作成する",
+          "requester_email": "test.hanako@premiere-mode.co.jp",
+          "assignee_email": "test.taro@premiere-mode.co.jp",
+          "fields": {
+            "ステータス": "未着手",
+            "期日": "2026-10-23",
+            "備考": "",
+            "完了条件": "7部署のフォルダがそろっている",
+            "親プロジェクトID": "00000000-0000-0000-0000-000000000001",
+            "事業部領域": [
+              "Salesforce・AI"
+            ]
+          },
+          "evidence": "テスト太郎さん：今週中にドライブを作ります"
+        }
+      ],
+      "open_questions": []
+    },
+    {
+      "meeting_key": "meet:test002_20261021T050000Z",
+      "source": "meet",
+      "scope": "社外",
+      "placement": "社外/サンプル商事様",
+      "domains": [
+        "セールス・マーケ"
+      ],
+      "related_project_ids": [],
+      "minutes_title": "2026-10-21 サンプル商事様 定例",
+      "minutes_doc_id": "DOC_ID_TEST_002",
+      "minutes_markdown": null,
+      "confidence": "高",
+      "reason": "社外参加者のドメイン sample-shoji.example が顧客一覧のサンプル商事様と一致",
+      "sensitive": false,
+      "summary": {
+        "decisions": [
+          "次回は11月第1週に開催する"
+        ],
+        "next_actions": [
+          {
+            "who": "テスト 花子",
+            "what": "見積書を送付する",
+            "due": null
+          }
+        ]
+      },
+      "task_proposals": [
+        {
+          "type": "新規",
+          "task_db": "非プロジェクト",
+          "target_id": null,
+          "title": "サンプル商事様へ見積書を送付する",
+          "requester_email": null,
+          "assignee_email": "test.hanako@premiere-mode.co.jp",
+          "fields": {
+            "ステータス": "未着手",
+            "期日": null,
+            "備考": "期日：要確認",
+            "完了条件": "",
+            "親プロジェクトID": null,
+            "事業部領域": [
+              "セールス・マーケ"
+            ]
+          },
+          "evidence": "テスト花子さん：見積を出します"
+        }
+      ],
+      "open_questions": [
+        "見積書の送付期日"
+      ]
+    },
+    {
+      "meeting_key": "tldv:tldvtest003",
+      "source": "tldv",
+      "scope": "社外",
+      "placement": "社外/未登録株式会社（要確認）",
+      "domains": [
+        "EC"
+      ],
+      "related_project_ids": [],
+      "minutes_title": "2026-10-21 新規取引の相談",
+      "minutes_doc_id": "DOC_ID_TEST_003",
+      "minutes_markdown": null,
+      "confidence": "低",
+      "reason": "社名が文字起こしにしか出ず、顧客一覧に無い",
+      "sensitive": false,
+      "summary": {
+        "decisions": [],
+        "next_actions": []
+      },
+      "task_proposals": [],
+      "open_questions": [
+        "先方の社名の表記",
+        "参加者の氏名"
+      ]
+    }
+  ],
+  "masters": {
+    "folders": [
+      {
+        "placement": "社内/事業部全体",
+        "notion_domain": null
+      },
+      {
+        "placement": "社内/セールス・マーケ",
+        "notion_domain": "セールス・マーケ"
+      },
+      {
+        "placement": "社内/EC",
+        "notion_domain": "EC"
+      },
+      {
+        "placement": "社内/生産管理",
+        "notion_domain": "生産管理"
+      },
+      {
+        "placement": "社内/経理・バックオフィス",
+        "notion_domain": "経理・バックオフィス"
+      },
+      {
+        "placement": "社内/Salesforce・AI",
+        "notion_domain": "Salesforce・AI"
+      },
+      {
+        "placement": "社内/経営",
+        "notion_domain": "経営"
+      }
+    ],
+    "clients": [
+      {
+        "client_name": "サンプル商事様",
+        "domains": [
+          "sample-shoji.example"
+        ]
+      }
+    ],
+    "internal": [
+      "premiere-mode.co.jp",
+      "test.private@gmail.com"
+    ],
+    "people": [
+      {
+        "name": "テスト 太郎",
+        "google_email": "test.taro@premiere-mode.co.jp",
+        "notion_user_id": null,
+        "chatwork_account_id": null,
+        "is_reviewer": true
+      },
+      {
+        "name": "テスト 花子",
+        "google_email": "test.hanako@premiere-mode.co.jp",
+        "notion_user_id": null,
+        "chatwork_account_id": null,
+        "is_reviewer": true
+      }
+    ]
+  },
+  "manifests": [
+    {
+      "meeting_key": "meet:test002_20261021T050000Z",
+      "source": "meet",
+      "event_id": "test002_20261021T050000Z",
+      "title": "サンプル商事様 定例",
+      "start": "2026-10-21T14:00:00+09:00",
+      "end": "2026-10-21T15:00:00+09:00",
+      "organizer_email": "test.hanako@premiere-mode.co.jp",
+      "attendees": [
+        {
+          "email": "test.hanako@premiere-mode.co.jp",
+          "name": "テスト 花子"
+        },
+        {
+          "email": "yamada@sample-shoji.example",
+          "name": "山田"
+        }
+      ],
+      "meet_url": "https://meet.google.com/aaa-bbbb-ccc",
+      "files": {
+        "recording": "FILE_REC",
+        "transcript": "FILE_TR",
+        "gemini": "FILE_GM"
+      },
+      "missing": [],
+      "status": "ready",
+      "created_at": "2026-10-21T15:25:00+09:00"
+    },
+    {
+      "meeting_key": "meet:test001_20261021T020000Z",
+      "source": "meet",
+      "event_id": "test001_20261021T020000Z",
+      "title": "議事録運用 打ち合わせ",
+      "start": "2026-10-21T11:00:00+09:00",
+      "end": "2026-10-21T12:00:00+09:00",
+      "organizer_email": "test.taro@premiere-mode.co.jp",
+      "attendees": [
+        {
+          "email": "test.taro@premiere-mode.co.jp",
+          "name": "テスト 太郎"
+        },
+        {
+          "email": "test.hanako@premiere-mode.co.jp",
+          "name": "テスト 花子"
+        }
+      ],
+      "meet_url": "https://meet.google.com/aaa-bbbb-ccc",
+      "files": {},
+      "missing": [],
+      "status": "ready",
+      "created_at": "2026-10-21T12:25:00+09:00"
+    },
+    {
+      "meeting_key": "tldv:tldvtest003",
+      "source": "tldv",
+      "title": "新規取引の相談",
+      "start": "2026-10-21T16:00:00+09:00",
+      "end": "2026-10-21T16:40:00+09:00",
+      "attendees": [
+        {
+          "email": "test.taro@premiere-mode.co.jp",
+          "name": "テスト 太郎"
+        },
+        {
+          "name": "先方担当"
+        }
+      ],
+      "files": {},
+      "status": "ready"
+    }
+  ]
+};
+
+
+// notionTestEnvironment.js
+var NotionTestEnvironment_ = (function () {
+  var parent = '400ca178-7419-80e8-bb9a-f157874b6105';
+  var ids = { minutes: 'd9cc47f9-543e-4bcb-8ec8-27bebc0feac5', tasks: 'c908936a-6999-4119-9e9c-df364f5f5d1b' };
+  function normalize(value) { return String(value || '').replace(/-/g, '').toLowerCase(); }
+  function open(writingWorkflow) {
+    var properties = PropertiesService.getScriptProperties();
+    if (properties.getProperty('ENV') !== 'test') throw new Error('ENV=test が必要です。');
+    var dryRun = properties.getProperty('DRY_RUN');
+    if (writingWorkflow && !['true', 'false'].includes(dryRun)) throw new Error('DRY_RUN は true または false を明示してください。');
+    var token = String(properties.getProperty('NOTION_TOKEN') || '').trim();
+    if (!token) throw new Error('MTG議事録連携（GAS）のNOTION_TOKENが必要です。');
+    ['minutes', 'tasks'].forEach(function (k) {
+      var name = k === 'minutes' ? 'NOTION_DB_MINUTES_TEST' : 'NOTION_DB_TASKS_TEST';
+      if (normalize(properties.getProperty(name)) !== normalize(ids[k])) throw new Error(name + ' が確認済みテストDBのIDと一致しません。');
+    });
+    var verified = {};
+    function request(method, path, body, optionalStatuses) {
+      if (method !== 'get') {
+        if (!writingWorkflow || dryRun !== 'false' || method !== 'post' || path !== 'pages' || !verified.minutes || !verified.tasks ||
+            !body.parent || body.parent.type !== 'data_source_id' || normalize(body.parent.data_source_id) !== normalize(verified.minutes.sourceId)) throw new Error('テスト議事録DBへのページ作成以外は禁止です。');
+      }
+      var options = { method: method, headers: { Authorization: 'Bearer ' + token, 'Notion-Version': '2025-09-03' }, muteHttpExceptions: true };
+      if (body) { options.contentType = 'application/json'; options.payload = JSON.stringify(body); }
+      Utilities.sleep(350);
+      var response;
+      try { response = UrlFetchApp.fetch('https://api.notion.com/v1/' + path, options); }
+      catch (e) { throw new Error('Notionとの通信に失敗しました。書き込み結果は実Notionで確認してください。'); }
+      var status = response.getResponseCode(), data;
+      try { data = JSON.parse(response.getContentText()); } catch (e) { throw new Error('NotionからJSON以外の応答が返りました。HTTP ' + status); }
+      if (status < 200 || status >= 300) {
+        if ((optionalStatuses || []).includes(status)) return null;
+        throw new Error('Notionテスト接続: HTTP ' + status + ' / ' + String(data.code || '不明'));
+      }
+      return data;
+    }
+    function schema(databaseId, key) {
+      var db = request('get', 'databases/' + encodeURIComponent(databaseId));
+      if (normalize(db.id) !== normalize(databaseId) || !db.parent || db.parent.type !== 'page_id' || normalize(db.parent.page_id) !== normalize(parent) || db.archived || db.in_trash) throw new Error('管理用ページ下の有効なDBではありません。');
+      if (!db.data_sources || db.data_sources.length !== 1) throw new Error('DBのデータソースを1つに特定できません。');
+      var ds = request('get', 'data_sources/' + encodeURIComponent(db.data_sources[0].id));
+      if (!ds.parent || normalize(ds.parent.database_id) !== normalize(db.id) || normalize(ds.id) !== normalize(db.data_sources[0].id) || !ds.properties || ds.archived || ds.in_trash) throw new Error('データソースの所属・状態を確認できません。');
+      var result = { databaseId: db.id, sourceId: ds.id, properties: ds.properties };
+      if (key) {
+        if (normalize(db.id) !== normalize(ids[key])) throw new Error('本番または未確認のDBです。');
+        verified[key] = result;
+        if (verified.minutes && verified.tasks && normalize(verified.minutes.sourceId) === normalize(verified.tasks.sourceId)) throw new Error('テスト用2DBのデータソースが同一です。');
+      }
+      return result;
+    }
+    function discoverInbox() {
+      var matches = [], cursor;
+      do {
+        var page = request('get', 'blocks/' + parent + '/children?page_size=100' + (cursor ? '&start_cursor=' + encodeURIComponent(cursor) : ''));
+        (page.results || []).forEach(function (b) {
+          if (b.type === 'child_database' && b.child_database.title === 'tl;dv 受信' && !b.archived && !b.in_trash) matches.push(b.id);
+        });
+        cursor = page.has_more ? page.next_cursor : null;
+      } while (cursor);
+      if (matches.length !== 1) throw new Error('管理用ページ直下の「tl;dv 受信」DBが' + matches.length + '件あります。1件に特定できません。');
+      return schema(matches[0]);
+    }
+    function project(id) {
+      var page = request('get', 'pages/' + encodeURIComponent(id), null, [400, 403, 404]);
+      if (!page || page.archived || page.in_trash || !page.parent || !verified.tasks) return null;
+      return page.parent.type === 'data_source_id' && normalize(page.parent.data_source_id) === normalize(verified.tasks.sourceId) ||
+        page.parent.type === 'database_id' && normalize(page.parent.database_id) === normalize(ids.tasks) ? page.id : null;
+    }
+    function createPage(payload) { return request('post', 'pages', payload); }
+    return { properties: properties, dryRun: dryRun === 'true', schema: schema, inbox: discoverInbox, project: project, createPage: createPage,
+      ids: { minutes: ids.minutes, tasks: ids.tasks } };
+  }
+  return { open: open, normalize: normalize };
+})();
+
+function checkTestEnvironment() {
+  var env = NotionTestEnvironment_.open(false), report = { databases: [], differences: [], inboxId: null };
+  function inspect(key, schema) {
+    var comparison = NotionFixturePlan_.compareSchema(key, schema.properties);
+    report.databases.push({ name: key, databaseId: schema.databaseId, properties: comparison.properties });
+    comparison.differences.forEach(function (d) { report.differences.push(Object.assign({ database: key }, d)); });
+    console.log('項目名・型: ' + key + ' / ' + JSON.stringify(comparison.properties));
+  }
+  inspect('minutes', env.schema(env.ids.minutes, 'minutes'));
+  inspect('tasks', env.schema(env.ids.tasks, 'tasks'));
+  try {
+    var inbox = env.inbox();
+    report.inboxId = inbox.databaseId;
+    inspect('inbox', inbox);
+    console.log('NOTION_DB_TLDV_INBOX = ' + inbox.databaseId + ' をスクリプトプロパティに登録してください。');
+  } catch (e) { report.differences.push({ database: 'inbox', kind: '取得失敗', message: e.message }); }
+  console.log('SPECとの差分一覧: ' + JSON.stringify(report.differences));
+  console.log('依頼者の型・tl;dvの参加者形式などSPECで未確定の部分は参考として表示します。設定・Notionへの書き込みは行っていません。');
+  return report;
+}
 
 
 // setup.js

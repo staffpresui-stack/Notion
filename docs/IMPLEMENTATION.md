@@ -1,5 +1,12 @@
 # 実装状況
 
+## 接続確認・段階2のNotionサンプル部分
+
+ユーザー報告でテストDBの初期作成成功・ID設定・フラグ解除・トークン差し替えを確認済みです。
+`checkTestEnvironment()` と `ingestFixturesToNotionTest()` を追加しました。手順と固定テストIDは `docs/NOTION_FIXTURE_TEST.md` にまとめています。
+Drive・Chatworkを使わず、既存の判定サンプル3件を処理します。純粋な判定とHTTPスタブで検証しています。GAS実行・実Notionへの作成はユーザーが行います。
+段階2全体（実Drive配置・台帳への取り込み・Chatwork通知）が完了したという意味ではありません。
+
 ## テストDB初期化の追加
 
 `setupTestDatabases()` を追加しました。専用フラグでユーザーが実行し、本番スキーマを読み取り、管理ページ下にテストDBを作成できます。
