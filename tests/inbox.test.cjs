@@ -155,3 +155,15 @@ test('マイドライブ用Driveアダプタはルート外・ショートカッ
   assert.throws(() => drive.move('safe', 'root'), /DRY_RUN/); assert.equal(writes, 0);
   assert.throws(() => ctx.Stage2Drive_.open({ ...config, ENV: 'prod' }));
 });
+test('CHATGPTのJSONだけの入力からGASが見出し・表付きDocを1件作成し、Notionにも構造を反映する',()=>{
+ const h=harness(),j=h.files['json-0'].data;delete h.files['json-1'];delete h.files['json-2'];delete h.files['doc-0'];delete h.docs['doc-0'];j.minutes_doc_id=null;j.minutes_markdown=fs.readFileSync('fixtures/minutes_markdown_sample.md','utf8');
+ h.ctx.ingestInbox();assert.equal(h.tables.minutes.length,1);const row=h.tables.minutes[0];assert.ok(row.minutes_doc_id);const html=h.docs[row.minutes_doc_id];assert.match(html,/<h2>基本情報<\/h2>/);assert.match(html,/<table/);assert.match(html,/<ul>/);assert.ok(h.creates[0].children.some(b=>b.type==='table'));assert.ok(h.creates[0].children.some(b=>b.type==='heading_2'));const id=row.minutes_doc_id;h.ctx.ingestInbox();assert.equal(h.tables.minutes[0].minutes_doc_id,id);assert.equal(h.creates.length,1);
+});
+test('minutes_markdownのDRY_RUNはDocを作らず予定だけ。不正な表も移動前に拒否する',()=>{
+ const h=harness({DRY_RUN:'true'});delete h.files['json-1'];delete h.files['json-2'];const j=h.files['json-0'].data;j.minutes_doc_id=null;j.minutes_markdown=fs.readFileSync('fixtures/minutes_markdown_sample.md','utf8');h.ctx.ingestInbox();assert.equal(h.writes.length,0);assert.equal(h.creates.length,0);
+ j.minutes_markdown='|a|b|\n|---|---|\n|one|';const result=h.ctx.ingestInbox();assert.equal(result[0].status,'要対応');assert.match(result[0].error,/列数/);assert.equal(h.writes.length,0);
+});
+test('MarkdownでDoc作成後に失敗しても再実行は同じDocを再利用する',()=>{
+ const h=harness(),j=h.files['json-0'].data;delete h.files['json-1'];delete h.files['json-2'];delete h.files['doc-0'];delete h.docs['doc-0'];j.minutes_doc_id=null;j.minutes_markdown=fs.readFileSync('fixtures/minutes_markdown_sample.md','utf8');h.failMove();h.ctx.ingestInbox();const id=h.tables.minutes[0].minutes_doc_id;
+ h.ctx.Stage2Content_.read=()=>h.ctx.Stage2Content_.blocks(h.ctx.Stage2Content_.markdown(j.minutes_markdown));h.ctx.retryInboxErrors();h.ctx.ingestInbox();assert.equal(h.tables.minutes[0].minutes_doc_id,id);assert.equal(Object.keys(h.docs).filter(k=>k.startsWith('file-')).length,1);assert.equal(h.creates.length,1);
+});

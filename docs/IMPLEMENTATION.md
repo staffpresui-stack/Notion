@@ -1,3 +1,13 @@
+# 予約タスクのJSON単独出力への対応（最新）
+
+通常チャットで文字起こしタブの原文取得と共有ドライブへのJSONアップロードはユーザー実機合格。親指定のネイティブDoc作成はOAuth接続でINVALID_ARGUMENTとなるため、ChatGPTはminutes_markdown全文入りJSONだけをアップロードし、GAS-AがDocを作る形に指示文・SPEC・スキーマ説明を変更しました。Markdownの見出し・箇条書き・番号付き・表からDoc用HTMLとNotion要素を生成する処理を追加。参照ファイル不在はテスト中だけ空扱いで続行し、要確認へ記録します。無人タスクのアップロード許可の持続は未確認です。参照書き出しと合わせてローカル141件のテストが成功。実GAS・予約タスク実行・実Doc表示の確認は行っていません。
+
+# 段階1実機合格と参照ファイル出力（最新）
+
+4df9ba3を反映したfinance@の実機で、Gemini内文字起こしタブを含む2ファイルのテスト受信への移動・manifest ready・IDと元リンクの維持・元サブフォルダを残す動作・再実行での二重移動防止・B登録解除・A同期が合格。A/BともDRY_RUN=trueへ復帰済みです。ChatGPTはpremiere・PlusにGoogle Driveコネクタ=finance@を接続する構成です。
+
+GAS-AにexportRefと毎朝6時台の任意トリガー管理を追加します。台帳マスタとテストNotionを読み取り、test/refの同名JSONをID維持で更新。DRY_RUNは件数・予定ログだけです。syncOrganizerRegistrationsの実更新ログを「同期しました」に分けました。手順はREF_EXPORT_TEST.md。実GAS実行・参照ファイル作成・予約タスクの実タブ読取確認は行っていません。
+
 # GAS-Bの文字起こしタブ対応（最新）
 
 43c7c14のGAS-Bはユーザーが作成・デプロイし、設定確認・予定一覧・DRY_RUNの登録とmoverRunが実機動作済みです。文字起こしがGeminiメモのタブに入るため待機していた差を修正し、DocsのincludeTabsContentで子タブを含め読み取り確認、manifest.transcript_sourceで所在を記録します。別ファイル優先を維持し、Docsサービス追加のみでOAuthスコープは追加しません。予約タスク指示文とSPECを更新。ローカル126件のテスト、build/check/smokeを確認済みです。手順はORGANIZER_TABS_UPDATE.md。実GAS実行・実ファイル移動・予約タスクの実タブ読取確認は行っていません。

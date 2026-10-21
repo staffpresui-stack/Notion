@@ -25,8 +25,9 @@ function syncOrganizerRegistrations_(){
       var matches=current.filter(function(r){return r.email===email;});if(matches.length>1)throw new Error('台帳の登録メールが重複しています。');
       plans.push({existing:matches[0],data:{email:email,registered_at:value.registered?value.registered_at:'',trigger_id:value.registered?value.trigger_id:'',last_run_at:value.last_run_at||'',last_result:value.registered?value.last_result:'登録解除'}});
     });
-    plans.forEach(function(p){console.log('主催者登録の同期予定：'+p.data.email+'／'+p.data.last_result);if(c.DRY_RUN==='true'){ledger.log('主催者登録の同期予定',p.data.email,p.data);return;}
+    plans.forEach(function(p){if(c.DRY_RUN==='true'){console.log('主催者登録の同期予定：'+p.data.email+'／'+p.data.last_result);ledger.log('主催者登録の同期予定',p.data.email,p.data);return;}
       if(!p.existing)ledger.append('organizers',p.data);else{var headers=Ledger_.headers.organizers.split(',');book.getSheetByName('organizers').getRange(p.existing._row,1,1,headers.length).setValues([headers.map(function(k){var s=String(p.data[k]||'');return /^[=+@]/.test(s)?"'"+s:s;})]);}
+      console.log('主催者登録を同期しました：'+p.data.email+'／'+p.data.last_result);
     });
     return {dryRun:c.DRY_RUN==='true',count:plans.length};
   });

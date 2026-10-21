@@ -47,7 +47,7 @@ var InboxIngest_ = (function () {
           if ((doc.appProperties || {}).meeting_key && doc.appProperties.meeting_key !== key) throw new Error('議事録Docの会議マーカーが違います。');
           if (doc.mimeType !== 'application/vnd.google-apps.document' || !(doc.parents || []).some(function (p) { return p === inbox.id || row && p === row.meeting_folder_id; })) throw new Error('議事録Docがinbox・格納フォルダ内にありません。');
           blocks = Stage2Content_.read(docId);
-        } else if (j.minutes_markdown) blocks = Stage2Content_.blocks(j.minutes_markdown.split('\n').map(function (text) { return { type: 'paragraph', text: text }; }));
+        } else if (j.minutes_markdown) blocks = Stage2Content_.blocks(Stage2Content_.markdown(j.minutes_markdown));
         else throw new Error('議事録Docまたはminutes_markdownが必要です。');
         if (!blocks.length) throw new Error('議事録本文が空です。');
         if (steps.contentHash && steps.contentHash !== hash(blocks)) throw new Error('取り込み中に議事録本文が変更されました。');

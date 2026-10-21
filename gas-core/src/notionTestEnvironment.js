@@ -112,6 +112,29 @@ var NotionTestEnvironment_ = (function () {
       } while (cursor);
       return out;
     }
+    function referenceProjects() {
+      if (!verified.tasks) throw new Error('テスト用タスクDBの確認が必要です。');
+      var titles=Object.values(verified.tasks.properties).filter(function(p){return p.type==='title';});
+      if(titles.length!==1)throw new Error('テスト用タスクDBのタイトル定義を確認してください。');
+      var rows=[],cursor=null,cursors=new Set(),seen=new Set();
+      do {
+        var body={page_size:100};if(cursor)body.start_cursor=cursor;
+        var result=request('post','data_sources/'+verified.tasks.sourceId+'/query',body);
+        if(!Array.isArray(result.results))throw new Error('Notionの一覧応答が不正です。既存参照ファイルは更新しません。');
+        result.results.forEach(function(page){
+          if(page.archived||page.in_trash)return;
+          if(!page.id||!page.parent||!(page.parent.type==='data_source_id'&&normalize(page.parent.data_source_id)===normalize(verified.tasks.sourceId)||page.parent.type==='database_id'&&normalize(page.parent.database_id)===normalize(ids.tasks)))throw new Error('参照候補にテスト用タスクDB以外のページが含まれています。');
+          if(seen.has(normalize(page.id)))throw new Error('Notionの参照候補が重複しています。再取得してください。');
+          seen.add(normalize(page.id));rows.push(RefExportPlan_.project(page));
+        });
+        cursor=result.has_more?result.next_cursor:null;
+        if(result.has_more&&(!cursor||cursors.has(cursor)))throw new Error('Notionのページ送りが不正です。');
+        if(cursor)cursors.add(cursor);
+        if(rows.length>5000||cursors.size>100)throw new Error('参照候補が上限を超えました。途中の内容で更新しません。');
+      }while(cursor);
+      rows.forEach(function(p){p.parent_ids=p.parent_ids.filter(function(id){return seen.has(normalize(id));});});
+      return rows;
+    }
     function createPage(payload) { var page = request('post', 'pages', payload); if (page.id) allowedPages.add(normalize(page.id)); return page; }
     function appendBlocks(id, children) { return request('patch', 'blocks/' + id + '/children', { children: children }); }
     function addInboxOptions() {
@@ -131,7 +154,7 @@ var NotionTestEnvironment_ = (function () {
     }
     return { properties: properties, dryRun: dryRun === 'true', schema: schema, inbox: discoverInbox, project: project, createPage: createPage,
       verifyMinutesPage: verifyMinutesPage, appendBlocks: appendBlocks, addInboxOptions: addInboxOptions,
-      updateReviewPage: updateReviewPage, prepareReviewStatus: prepareReviewStatus, projectDetails:function(id){return verifiedProjectInfo[id] || null;}, projects: projects,
+      updateReviewPage: updateReviewPage, prepareReviewStatus: prepareReviewStatus, projectDetails:function(id){return verifiedProjectInfo[id] || null;}, projects: projects, referenceProjects:referenceProjects,
       ids: { minutes: ids.minutes, tasks: ids.tasks } };
   }
   return { open: open, normalize: normalize };

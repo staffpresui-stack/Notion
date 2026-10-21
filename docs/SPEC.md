@@ -6,7 +6,7 @@
 
 ## ユーザー指定による変更
 
-GAS-A・GAS-Bの所有・認証、共有ドライブの作成・管理、ChatGPTの所有・Drive接続は `finance@premiere-mode.co.jp` に変更します。contact@はWorkspaceユーザーではなく、Notionのオーナーと内部インテグレーションだけを引き続き担当します。GAS-Bは各会議主催者の権限でファイルを移動します。
+GAS-A・GAS-Bの所有・認証、共有ドライブの作成・管理、ChatGPTのGoogle Driveコネクタは `finance@premiere-mode.co.jp` を使います。ChatGPT本体はpremiere・Plusです。contact@はWorkspaceユーザーではなく、Notionのオーナーと内部インテグレーションだけを引き続き担当します。GAS-Bは各会議主催者の権限でファイルを移動します。
 
 finance@で共有ドライブ「MTG記録」、既定フォルダ、台帳2つ、本体GASを作成済みです。今回の実行はまだ行っていません。共有ドライブの本番領域は読み取り確認にとどめ、準備・取り込みは `_system/_test` 内だけに限定します。詳しいIDと手順は `docs/SHARED_DRIVE_TEST.md` に記載します。_systemには目印を付けず、_testだけに付けます。
 
@@ -33,7 +33,7 @@ WorkspaceのDOMAIN限定Webアプリは設計上の候補ですが、公開・�
 
 | 主体 | 役割 |
 |---|---|
-| finance@ | Google Workspaceの管理者。GAS-A・GAS-Bの所有者、共有ドライブ「MTG記録」の作成・管理アカウント、ChatGPTの所有・Drive接続アカウント。共有ドライブ内の実操作権限は実機確認します（共有ドライブのファイルは組織所有です） |
+| finance@ | Google Workspaceの管理者。GAS-A・GAS-Bの所有者、共有ドライブ「MTG記録」の作成・管理アカウント、ChatGPT（premiere・Plus）のGoogle Drive接続アカウント。共有ドライブ内の実操作権限は実機確認します（共有ドライブのファイルは組織所有です） |
 | contact@ | Notionワークスペースのオーナー・内部インテグレーションの作成者。Workspaceユーザーではありません。tl;dv会社アカウントの確認は別途 |
 | 会議の主催者 | Meet ファイルの所有者。GAS-B で一度「登録」し、自分の時間主導トリガーを許可する。共有ドライブで `_system/00_受信` に書き込める権限（投稿者以上）が必要（要確認：`_system` をアクセス制限した場合の付与方法） |
 | 確認者 | 確認画面で確定・修正する人（仮：会議の主催者。仕分け待ちは管理者） |
@@ -139,8 +139,11 @@ MTG記録/
 ### 7-1. ChatGPT 予約タスク（`GENERATOR_MODE=CHATGPT`、既定）
 - ChatGPTはtranscript_sourceに従い、別ファイルまたはGeminiメモ内の指定文字起こしタブを読みます。指定タブを接続機能で読めない場合は生成せずエラー記録とします。メモの要約で代用しません。テスト用の予約タスク指示文は_system/_testを既定とします。
 - ChatGPT は `00_受信/*/manifest.json` のうち `status: "ready"` で、`inbox/{folder_key}.json` も `inbox/_done/{folder_key}.json` も無いものを処理する。
-- 出力：`inbox/{folder_key}_議事録`（Google ドキュメント）と `inbox/{folder_key}.json`（`schemas/inbox_judgement.schema.json` に従う）。指示文は `prompts/chatgpt_scheduled_task.md`。
-- 判定 JSON が書けない場合（Drive への書き込み不可・承認待ち）は、実機検証の結果で `GENERATOR_MODE=OPENAI_API` に切り替える。
+- 出力は `inbox/{folder_key}.json` **1ファイルだけ**。minutes_doc_id=null、minutes_markdownに議事録全文を入れ、UTF-8・MIME application/jsonのファイルを共有ドライブの_test/inboxへアップロードします。ChatGPTはネイティブDocの新規作成・マイドライブへの代用作成をしません。GAS-AがMarkdownからDocを作成・配置します。指示文は `prompts/chatgpt_scheduled_task.md`。
+- 通常チャットでGeminiの指定文字起こしタブの原文取得とJSONの親指定アップロードが実機合格。OAuth／委任接続でネイティブDocを親指定作成するとINVALID_ARGUMENTになる制約を確認済みです。親なしDoc作成が可能でも使いません。予約タスクでの無人アップロードと「常に許可」の持続は未確認です。承認待ち・失敗は未完了として扱います。
+- 失敗時は{folder_key}.error.txtをUTF-8・MIME text/plainとして同じinboxへアップロードします。エラーテキストも保存できない場合はタスク結果へ理由を残し、保存成功とは報告しません。
+- テスト中だけ、ref/masters.jsonまたはprojects.jsonが存在しなければ該当一覧を空として続行し、confidence=低、要確認の本文・open_questionsへ記録します。所在・所属不明は社外/顧客未特定（要確認）等の暫定値で仕分け待ちへ回し、存在しない人・顧客・PJ IDは作りません。参照が存在する場合のenv不一致・読み取り拒否・不正JSONは不在と区別して停止します。
+- 判定JSONを書けない場合は保存成功扱いにせず実機結果を報告します。OPENAI_APIへの切替は別途人が判断し、今回自動切替しません。
 
 ### 7-2. OpenAI API（`GENERATOR_MODE=OPENAI_API`、代替）
 - GAS-A が 00_受信 の ready を拾い、文字起こし（Doc のテキスト）と manifest、`ref/*.json` を入力に、OpenAI の Responses API を呼ぶ。指示文は `prompts/chatgpt_scheduled_task.md` の本文を流用し、出力は JSON Schema 指定（structured output）で判定 JSON＋議事録本文を受け取る。
@@ -151,6 +154,7 @@ MTG記録/
 
 ## 8. 取り込みと配置（GAS-A `ingestInbox`、10分ごと・仮）
 
+0. 新方式ではminutes_doc_id=null、minutes_markdownが本文。GAS-AはMarkdownの##／###見出し、箇条書き、番号付き、ヘッダー付き表を共通の要素列へ変換し、HTMLインポートでinboxにGoogle Docを作成します。同じ要素列からNotionの見出し・リスト・表も生成します。表の列数不一致は移動前に拒否。セル内縦棒は\|でエスケープします。生HTMLは文字としてエスケープし、URLは省略します。既存minutes_doc_id方式も互換維持します。
 1. `inbox/*.json` を古い順に最大 `INGEST_BATCH` 件。スキーマ検証に失敗したら `status=要対応`、`last_error` に理由。
 2. 規則による判定（GAS が計算）：
    - 社内／社外：参加者全員が `masters_internal`（メールかドメイン）に含まれれば社内、それ以外は社外。
@@ -331,3 +335,14 @@ Notion：MTG議事録「{議事録名}」（{作成済み|作成待ち}）
 4. tl;dv 受信DB に届くページの形（トランスクリプトがプロパティか本文か、長い会議で切れないか、参加者の形式、会議URL から meetingId を取れるか）。
 5. Chatwork の PUT 書き換え時に `[To]` で再通知が飛ぶか。
 6. Web アプリで操作者のメールを取れるか。Windows の Chrome／Edge で複数アカウントにログインしているときに開けるか。
+
+
+## 参照ファイルの書き出し（テスト）
+
+GAS-AのexportRefでENV=testかつ初期化済み `_system/_test/ref` へmasters.jsonとprojects.jsonを出力します。mastersはテスト台帳のmasters_people／clients／internal／foldersから、会社メール・氏名・NotionユーザーID・領域・顧客ドメイン・配置名に絞ります。primary会社メールのない社員行は件数をログに出し除外し、権限列・個人別名・Chatwork ID・DriveフォルダIDは出力しません。internalの社内判定用メール・ドメインは元のマスタどおりです。
+
+projectsは確認済みテストタスクDBのデータソースをNotion-Version 2025-09-03で読み取りページングし、id／title／status／domains／parent_ids／dueだけをprojects配列へ出力します。ゴミ箱の行は除外、親IDは同じ参照一覧内だけを保持。本文・備考・担当者の自由記述は出しません。statusはstatus／select、未入力はnullとします。空DBはprojects=[]です。Notionには書き込みません。
+
+各JSONはschema_version=1、env=test、generated_atを持ち、同じ実行で同一のgenerated_atを使います。既存同名ファイルのIDを保ってメディアだけ更新し、移動・名前変更・削除はしません。重複や型・所属不正、取得失敗時は更新前に停止します。作成結果不明なら二重作成を止めて確認を促します。2ファイルの更新は完全な一括処理ではないため、途中失敗後は再実行します。予約タスクはgenerated_at不一致なら完了を待ちます。
+
+DRY_RUN=trueは件数と予定を実行ログへ出すだけで、Drive・台帳・プロパティを変更しません。setupRefExportTrigger／removeRefExportTriggerでfinance@の毎朝6時台（日本時間）のトリガーを管理できます。trueの間は定期更新も予定表示のみです。手順はREF_EXPORT_TEST.md。

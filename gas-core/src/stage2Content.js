@@ -49,8 +49,60 @@ var Stage2Content_ = (function () {
     }
     return blocks(elements);
   }
-  function html(text) { return '<html><body><p>' + String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '</p><p>') + '</p></body></html>'; }
-  return { blocks: blocks, read: read, html: html };
+  function inline(value) {
+    return clean(String(value||'').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')).replace(/\*\*([^*]+)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1');
+  }
+  function cells(line) {
+    var result=[],cell='',escaped=false;
+    Array.from(line.trim()).forEach(function(c){
+      if(escaped){cell+=(c==='|'||c==='\\')?c:'\\'+c;escaped=false;}
+      else if(c==='\\')escaped=true;
+      else if(c==='|'){result.push(cell.trim());cell='';}
+      else cell+=c;
+    });
+    if(escaped)cell+='\\';result.push(cell.trim());
+    if(line.trim().startsWith('|'))result.shift();
+    if(result.length&&result[result.length-1]===''&&line.trim().endsWith('|'))result.pop();
+    return result;
+  }
+  function markdown(text) {
+    var lines=String(text||'').replace(/\r\n?/g,'\n').split('\n'),out=[],fenced=false;
+    for(var i=0;i<lines.length;i++){
+      var line=lines[i].trim(),match;
+      if(/^```/.test(line)){fenced=!fenced;continue;}
+      if(!line)continue;
+      if(fenced){out.push({type:'paragraph',text:line});continue;}
+      if(line.includes('|')&&i+1<lines.length){
+        var divider=cells(lines[i+1]);
+        if(divider.length&&divider.every(function(v){return /^:?-{3,}:?$/.test(v);})){
+          var header=cells(line),rows=[header];if(header.length!==divider.length)throw new Error('Markdown表の列数が一致しません。');i+=2;
+          for(;i<lines.length&&lines[i].trim()&&lines[i].includes('|');i++){var row=cells(lines[i]);if(row.length!==header.length)throw new Error('Markdown表の列数が一致しません。セル内の縦棒は\\|で記載してください。');rows.push(row);}i--;
+          out.push({type:'table',rows:rows.map(function(r){return r.map(inline);})});continue;
+        }
+      }
+      if((match=/^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line)))out.push({type:match[1].length<=2?'heading_2':'heading_3',text:inline(match[2])});
+      else if((match=/^[-*+]\s+(.+)$/.exec(line)))out.push({type:'bulleted_list_item',text:inline(match[1])});
+      else if((match=/^\d+[.)]\s+(.+)$/.exec(line)))out.push({type:'numbered_list_item',text:inline(match[1])});
+      else out.push({type:'paragraph',text:inline(line)});
+    }
+    if(fenced)throw new Error('Markdownのコード囲みが閉じていません。');
+    return out;
+  }
+  function html(text) {
+    function escape(v){return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+    var parts=['<!doctype html><html><head><meta charset="UTF-8"></head><body>'],list=null;
+    markdown(text).forEach(function(e){
+      var tag=e.type==='bulleted_list_item'?'ul':e.type==='numbered_list_item'?'ol':null;
+      if(list!==tag){if(list)parts.push('</'+list+'>');if(tag)parts.push('<'+tag+'>');list=tag;}
+      if(tag)parts.push('<li>'+escape(e.text)+'</li>');
+      else if(e.type==='table'){
+        parts.push('<table border="1"><thead><tr>'+e.rows[0].map(function(v){return '<th>'+escape(v)+'</th>';}).join('')+'</tr></thead><tbody>');
+        e.rows.slice(1).forEach(function(row){parts.push('<tr>'+row.map(function(v){return '<td>'+escape(v)+'</td>';}).join('')+'</tr>');});parts.push('</tbody></table>');
+      }else{var heading=e.type==='heading_2'?'h2':e.type==='heading_3'?'h3':'p';parts.push('<'+heading+'>'+escape(e.text)+'</'+heading+'>');}
+    });
+    if(list)parts.push('</'+list+'>');return parts.join('')+'</body></html>';
+  }
+  return { blocks: blocks, read: read, html: html, markdown: markdown };
 })();
 
 function seedFixtureInbox() {

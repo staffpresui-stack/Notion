@@ -1,6 +1,6 @@
 # finance@の共有ドライブで段階2を検証する
 
-GAS・共有ドライブの作成管理・ChatGPTの所有とDrive接続は **finance@premiere-mode.co.jp** を使います。Notionのオーナーと内部インテグレーションの作成者は **contact@** のままです。Notion管理用ページの表示名も変更しません。
+GAS・共有ドライブの作成管理と、ChatGPT（premiere・Plus）のGoogle Drive接続には **finance@premiere-mode.co.jp** を使います。Notionのオーナーと内部インテグレーションの作成者は **contact@** のままです。Notion管理用ページの表示名も変更しません。
 finance@の本体GASとDrive構成はユーザーが作成済みです。この版の実GAS実行・実サービスへの書き込みはまだ行っていません。
 
 ## 1. finance@のGASに反映する

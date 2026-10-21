@@ -21,7 +21,7 @@ function harness(dryRun = 'false', shared = false) {
     return { sheets, getSheetByName: n => sheets[n] || null, insertSheet(n) { assert.ok(!sheets[n]); return sheets[n] = sheet(); } };
   }
   const ctx = vm.createContext({ console: { log() {} },
-    PropertiesService: { getScriptProperties: () => ({ getProperties: () => ({ ...props }), getProperty: k => props[k], setProperty(k, v) { writes.push('property'); props[k] = v; } }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperties: () => ({ ...props }), getProperty: k => props[k], setProperty(k, v) { writes.push('property'); props[k] = v; }, deleteProperty(k) { writes.push('property-delete'); delete props[k]; } }) },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
     Utilities: { getUuid: () => 'test-env-uuid', newBlob: (content, mime, name) => ({ content, mime, name }), formatDate: (d, zone, format) => format === 'yyMMdd' ? '261021' : '2026-10-21', DigestAlgorithm: { SHA_256: 'sha256' }, Charset: { UTF_8: 'utf8' }, computeDigest: (a, value) => [...crypto.createHash('sha256').update(value).digest()] },
     SpreadsheetApp: { openById: id => { assert.ok(books[id]); return books[id]; } },
@@ -49,6 +49,7 @@ function harness(dryRun = 'false', shared = false) {
         assert.equal(options.supportsAllDrives, true);
         if (shared) { assertInside(id); if (options.addParents) assertInside(options.addParents); assert.equal(body.name, undefined); }
         Object.assign(files[id], clone(body));
+        if(media) files[id].content=media.content;
         if (options.removeParents) files[id].parents = files[id].parents.filter(p => !options.removeParents.split(',').includes(p));
         if (options.addParents && !files[id].parents.includes(options.addParents)) files[id].parents.push(options.addParents);
         writes.push('update'); return clone(files[id]);
@@ -178,4 +179,42 @@ test('高速台帳は使用シートを1回ずつまとめて取得し、更新�
  const h=harness();const setup=h.ctx.setupTestWorkspace(),book=h.books[setup.ledger];let reads=0;for(const sheet of Object.values(book.sheets)){const range=sheet.getRange;sheet.getRange=(...args)=>{const r=range(...args),get=r.getValues;return {...r,getValues:()=>{reads++;return get()}}}};
  const ledger=h.ctx.Stage2Ledger_.open(book,true);ledger.rows('masters_people');ledger.rows('masters_people');assert.equal(reads,1);const r={meeting_key:'test',status:'確認待ち'};ledger.save(r);assert.equal(reads,2);r.status='確定';ledger.save(r);assert.equal(ledger.rows('minutes')[0].status,'確定');assert.equal(reads,2);
  const fresh=h.ctx.Stage2Ledger_.open(book,true);assert.equal(fresh.rows('minutes')[0].status,'確定');assert.equal(reads,3);
+});
+
+function referenceHarness() {
+  const h=harness('false',true);h.ctx.setupSharedTestWorkspace();
+  h.ctx.Session={getActiveUser:()=>({getEmail:()=> 'finance@premiere-mode.co.jp'}),getEffectiveUser:()=>({getEmail:()=> 'finance@premiere-mode.co.jp'})};
+  h.props.NOTION_DB_TASKS_TEST='c908936a-6999-4119-9e9c-df364f5f5d1b';
+  const projects=[{id:'project1',title:'テストPJ',status:'進行中',domains:['EC'],parent_ids:[],due:null}];
+  h.ctx.NotionTestEnvironment_={open:(writing,purpose)=>{assert.equal(writing,false);assert.equal(purpose,'ref-export');return {ids:{tasks:h.props.NOTION_DB_TASKS_TEST},schema(){},referenceProjects:()=>clone(projects)}}};
+  for(const name of ['reviewSecurity','reviewCache','refExportPlan','exportRef'])vm.runInContext(fs.readFileSync('gas-core/src/'+name+'.js','utf8'),h.ctx);
+  h.writes.length=0;h.calls.length=0;return {...h,projects};
+}
+test('共有ドライブの参照ファイル2件を作成し、2回目は同じIDで内容だけ更新する',()=>{
+  const h=referenceHarness(),first=h.ctx.exportRef();assert.equal(Object.keys(first.files).length,2);const id=first.files['projects.json'];assert.equal(JSON.parse(h.files[id].content).projects[0].title,'テストPJ');
+  const masters=JSON.parse(h.files[first.files['masters.json']].content);assert.ok(masters.people[0].google_email);assert.equal('chatwork_account_id' in masters.people[0],false);assert.equal('drive_folder_id' in masters.folders[0],false);
+  h.projects[0].title='変更後';h.writes.length=0;const second=h.ctx.exportRef();assert.deepEqual(clone(second.files),clone(first.files));assert.equal(JSON.parse(h.files[id].content).projects[0].title,'変更後');assert.equal(h.writes.filter(w=>w==='create').length,0);assert.equal(Object.values(h.files).filter(f=>f.name==='projects.json').length,1);
+  assert.ok(h.calls.filter(c=>c.method==='update').every(c=>!c.options.addParents&&!c.options.removeParents&&!c.body.name));
+});
+test('参照DRY_RUNは件数と予定だけでDrive・台帳・スクリプトプロパティを変更しない',()=>{
+  const h=referenceHarness();h.props.DRY_RUN='true';const before=clone(h.files),props=clone(h.props);const r=h.ctx.exportRef();assert.equal(r.dryRun,true);assert.equal(r.counts.projects,1);assert.equal(h.writes.length,0);assert.deepEqual(h.files,before);assert.deepEqual(h.props,props);assert.equal(h.books['shared-book'].sheets.dry_run_log.getLastRow(),1);
+});
+test('重複・不正MIME・ref外への移動・Notion取得失敗・ENV本番は既存ファイルを更新しない',()=>{
+ for(const change of [h=>{h.files.copy={...h.files[h.ids['projects.json']],id:'copy'}},h=>{h.files[h.ids['projects.json']].mimeType='application/vnd.google-apps.document'},h=>{h.files['existing-ref'].parents=['shared-system']},h=>{h.ctx.NotionTestEnvironment_.open=()=>{throw Error('Notion HTTP 403')}},h=>h.props.ENV='prod']){
+  const h=referenceHarness();h.ids=h.ctx.exportRef().files;h.writes.length=0;change(h);assert.throws(()=>h.ctx.exportRef());assert.equal(h.writes.length,0);
+ }
+});
+test('作成応答が不明でも次回は既存IDを再利用し、見つからなければ二重作成せず停止する',()=>{
+ const h=referenceHarness(),create=h.ctx.Drive.Files.create;let once=true;h.ctx.Drive.Files.create=(...args)=>{const f=create(...args);if(once){once=false;throw Error('応答不明')}return f};assert.throws(()=>h.ctx.exportRef(),/応答不明/);const first=Object.values(h.files).find(f=>f.name==='masters.json');const r=h.ctx.exportRef();assert.equal(r.files['masters.json'],first.id);
+ const x=referenceHarness();x.props['REF_EXPORT_PENDING:shared-test:masters.json']='作成結果不明';assert.throws(()=>x.ctx.exportRef(),/二重作成/);assert.equal(x.writes.length,0);
+});
+test('参照更新トリガーは毎朝日本時間6時台に1個だけ、DRY_RUN・解除は他トリガーを触らない',()=>{
+ const h=referenceHarness(),triggers=[{getHandlerFunction:()=> 'other'}];let hour,zone,days;
+ h.ctx.ScriptApp={getProjectTriggers:()=>triggers.slice(),newTrigger:name=>({timeBased(){return this},atHour(v){hour=v;return this},everyDays(v){days=v;return this},inTimezone(v){zone=v;return this},create(){const t={getHandlerFunction:()=>name,getUniqueId:()=> '123'};triggers.push(t);return t}}),deleteTrigger:t=>triggers.splice(triggers.indexOf(t),1)};
+ h.props.DRY_RUN='true';h.ctx.setupRefExportTrigger();assert.equal(triggers.length,1);h.props.DRY_RUN='false';h.ctx.setupRefExportTrigger();h.ctx.setupRefExportTrigger();assert.equal(triggers.length,2);assert.equal(hour,6);assert.equal(days,1);assert.equal(zone,'Asia/Tokyo');h.ctx.removeRefExportTrigger();assert.equal(triggers.length,1);assert.equal(triggers[0].getHandlerFunction(),'other');
+});
+test('Notion取得後にrefが_test外へ移動しても、実更新直前に検知して停止する',()=>{
+ const h=referenceHarness();h.ctx.exportRef();h.writes.length=0;const open=h.ctx.NotionTestEnvironment_.open;
+ h.ctx.NotionTestEnvironment_.open=(...args)=>({...open(...args),referenceProjects:()=>{h.files['existing-ref'].parents=['shared-system'];return clone(h.projects)}});
+ assert.throws(()=>h.ctx.exportRef(),/refフォルダの所属/);assert.equal(h.writes.length,0);
 });

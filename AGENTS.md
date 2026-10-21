@@ -14,7 +14,7 @@
 
 ## 最新のユーザー指定（元の設計より優先）
 
-- GAS-A・GAS-Bの所有・作成・認証、共有ドライブ「MTG記録」の作成・管理、ChatGPTの所有・Drive接続は `finance@premiere-mode.co.jp` に変更済み。contact@はWorkspaceユーザーではありません。Notionのオーナー・内部インテグレーションはcontact@のままです。
+- GAS-A・GAS-Bの所有・作成・認証、共有ドライブ「MTG記録」の作成・管理、ChatGPTのGoogle Driveコネクタは `finance@premiere-mode.co.jp` を使用します。ChatGPT本体はpremiere・Plusです。contact@はWorkspaceユーザーではありません。Notionのオーナー・内部インテグレーションはcontact@のままです。
 - finance@の本体GASと共有ドライブのフォルダ・本番／テスト台帳はユーザーが作成済みです。最新の手順は `docs/SHARED_DRIVE_TEST.md`。ENV=testで_test内だけを準備・検証します。_systemは読み取りだけで、目印を付けません。本番台帳・_test外への書き込みは禁止です。
 - GAS実行と実サービスへの書き込みはユーザーが行います。Codexはローカル実装・テスト・コミット・許可されたworkへのpushを行います。mainへのマージや強制pushは行いません。
 - 前回staff.presuiで成功したNotionのサンプル3件と重複防止記録は維持します。GASのスクリプトプロパティはプロジェクト間で自動移行しません。再利用にはNOTION_FIXTURE:*のページID記録をfinance@側へ移します。NOTION_TOKENは人がfinance@側の設定に入力します。
@@ -30,6 +30,10 @@
 - 段階1GAS-Bをfinance@の別プロジェクトとして実装します。今回の主催者はfinance@だけ、MOVER_TEST_EVENT_IDで指定した予定1件だけ。本人所有のMeet添付をマイドライブから指定_test/00_受信へ移す操作は今回のユーザー依頼で許可されています。GAS-Aへの登録は_test/_organizersの本人更新ファイルを検証して同期し、台帳の編集権限・公開doPostを社員に渡しません。最新手順は `docs/ORGANIZER_TEST.md`。
 
 - GAS-Bの実機でGeminiメモ内の文字起こしタブを確認済みです。別ファイルまたはメモ内タブを文字起こしの充足とし、Docs APIは読み取りだけ。manifest.transcript_sourceに所在を記録し、物理ファイルの同一IDを二重登録しません。最新手順は `docs/ORGANIZER_TABS_UPDATE.md`。
+
+- 4df9ba3の段階1はユーザーの実機報告で合格です。物理2件＋manifest ready、ファイルID・元リンク維持、空の元フォルダ維持、二重移動なし、Bの登録解除とAの台帳同期を確認済みです。A/BともDRY_RUN=trueへ復帰済み。予約タスク用参照ファイルはGAS-AのexportRefで_test/refへ出力します。最新手順は `docs/REF_EXPORT_TEST.md`。
+
+- 通常ChatGPTチャットから文字起こしタブの原文読取とJSONアップロードは実機合格。ネイティブDocの親指定作成はOAuth接続の制約で失敗するため、CHATGPTもminutes_doc_id=null・minutes_markdown全文入りJSONだけをアップロードし、GAS-Aが見出し・リスト・表を含むDocを作ります。エラーはtext/plainの.txtアップロード。テスト中だけ参照ファイル不在は空扱い＋要確認で続行。無人予約タスクの継続許可は未確認です。
 
 ## 1. 最初に読む順番
 

@@ -89,6 +89,56 @@ var DriveUtil_ = (function () {
 })();
 
 
+// exportRef.js
+function exportRef(){assertFinanceOperator_();return exportRef_();}
+function refExportTick_(){
+  if(String(Session.getEffectiveUser().getEmail()||'').toLowerCase()!=='finance@premiere-mode.co.jp')throw new Error('参照更新トリガーはfinance@が作成してください。');
+  return exportRef_();
+}
+function exportRef_(){return Ledger_.withLock(function(){
+  var c=Stage2Drive_.config(),drive=Stage2Drive_.open(c);drive.within(c.LEDGER_SPREADSHEET_ID);
+  var ref=drive.folder(drive.root.id,'ref',false),existing=drive.children(ref.id),ledger=Stage2Ledger_.open(SpreadsheetApp.openById(c.LEDGER_SPREADSHEET_ID),true);
+  var at=new Date().toISOString(),masters=RefExportPlan_.masters(ledger.masters(),at);
+  var env=NotionTestEnvironment_.open(false,'ref-export');env.schema(env.ids.tasks,'tasks');
+  var projects=env.referenceProjects(),projectData={schema_version:1,env:'test',generated_at:at,database_id:env.ids.tasks,projects:projects};
+  var props=PropertiesService.getScriptProperties();
+  // 両方の取得・重複・所属をすべて確認してから更新します。
+  var plans=[{name:'masters.json',data:masters.data},{name:'projects.json',data:projectData}].map(function(p){
+    var matches=existing.filter(function(f){return f.name===p.name;});if(matches.length>1)throw new Error(p.name+'が重複しています。削除せず停止します。');
+    p.file=matches[0]||null;p.pendingKey='REF_EXPORT_PENDING:'+drive.root.id+':'+p.name;
+    if(p.file){var f=drive.within(p.file.id);if(!['application/json','text/plain','application/octet-stream'].includes(f.mimeType)||!f.parents||f.parents.length!==1||f.parents[0]!==ref.id)throw new Error(p.name+'の型・所属を確認してください。');}
+    else if(props.getProperty(p.pendingKey))throw new Error(p.name+'の前回作成結果が不明です。Driveの同名ファイルを確認してください。二重作成しません。');
+    return p;
+  });
+  var counts={folders:masters.data.folders.length,clients:masters.data.clients.length,internal:masters.data.internal.length,people:masters.data.people.length,projects:projects.length,omittedPeople:masters.omittedPeople};
+  console.log('参照ファイルの件数：'+JSON.stringify(counts));
+  if(c.DRY_RUN==='true'){plans.forEach(function(p){console.log(p.name+'を'+(p.file?'同じIDで更新':'新規作成')+'する予定です。');});return {dryRun:true,counts:counts};}
+  var ids={};
+  plans.forEach(function(p){
+    var destination=Drive.Files.get(ref.id,{supportsAllDrives:true,fields:'id,name,parents,mimeType,driveId,trashed'});
+    if(destination.trashed||destination.name!=='ref'||destination.mimeType!=='application/vnd.google-apps.folder'||!destination.parents||destination.parents.length!==1||destination.parents[0]!==drive.root.id||c.SHARED_DRIVE_ID&&destination.driveId!==c.SHARED_DRIVE_ID)throw new Error('書き込み直前にrefフォルダの所属が変わりました。');
+    var blob=Utilities.newBlob(JSON.stringify(p.data,null,2),'application/json',p.name),saved;
+    // 実行直前も既存ファイルの所属を確認し、移動・名前変更はしません。
+    if(p.file){var f=Drive.Files.get(p.file.id,{supportsAllDrives:true,fields:'id,name,parents,mimeType,trashed,driveId'});
+      if(f.trashed||f.name!==p.name||!f.parents||f.parents.length!==1||f.parents[0]!==ref.id||c.SHARED_DRIVE_ID&&f.driveId!==c.SHARED_DRIVE_ID||!['application/json','text/plain','application/octet-stream'].includes(f.mimeType))throw new Error('更新直前に参照ファイルの状態が変わりました。');
+      saved=Drive.Files.update({},p.file.id,blob,{supportsAllDrives:true,fields:'id'});
+    }else{props.setProperty(p.pendingKey,at);saved=drive.createFile(ref.id,p.name,JSON.stringify(p.data,null,2),'application/json','reference');}
+    if(!saved||!saved.id)throw new Error('参照ファイルの保存結果を確認できません。');
+    props.deleteProperty(p.pendingKey);ids[p.name]=saved.id;console.log(p.name+'を書き出しました。ID：'+saved.id);
+  });
+  ['admin','reviewer'].forEach(function(role){ReviewCache_.remove('projects:'+drive.root.id+':'+c.NOTION_DB_TASKS_TEST+':'+role);});
+  return {dryRun:false,counts:counts,files:ids};
+});}
+function setupRefExportTrigger(){assertFinanceOperator_();return Ledger_.withLock(function(){
+  var c=Stage2Drive_.config(),drive=Stage2Drive_.open(c);drive.within(c.LEDGER_SPREADSHEET_ID);drive.folder(drive.root.id,'ref',false);
+  if(c.DRY_RUN==='true'){console.log('日本時間の毎朝6時台に参照ファイルを更新するトリガーを1つ作成する予定です。');return {dryRun:true};}
+  var own=ScriptApp.getProjectTriggers().filter(function(t){return t.getHandlerFunction()==='refExportTick_';});if(own.length>1)throw new Error('参照更新トリガーが重複しています。');
+  var trigger=own[0]||ScriptApp.newTrigger('refExportTick_').timeBased().atHour(6).everyDays(1).inTimezone('Asia/Tokyo').create();
+  console.log('毎朝6時台の参照更新トリガーを確認しました。');return {dryRun:false,triggerId:String(trigger.getUniqueId())};
+});}
+function removeRefExportTrigger(){assertFinanceOperator_();return Ledger_.withLock(function(){var c=Stage2Drive_.config();if(c.DRY_RUN==='true'){console.log('自分の参照更新トリガーだけを解除する予定です。');return;}ScriptApp.getProjectTriggers().filter(function(t){return t.getHandlerFunction()==='refExportTick_';}).forEach(function(t){ScriptApp.deleteTrigger(t);});console.log('自分の参照更新トリガーを解除しました。');});}
+
+
 // inboxPlan.js
 var InboxPlan_ = (function () {
   function mergeOptions(existing) {
@@ -186,8 +236,8 @@ var InboxJudgementSchema_ = {
       "uniqueItems": true
     },
     "minutes_title": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2} .+$" },
-    "minutes_doc_id": { "type": ["string", "null"], "description": "GENERATOR_MODE=CHATGPT のとき、inbox に作った議事録 Google ドキュメントの ID" },
-    "minutes_markdown": { "type": ["string", "null"], "description": "GENERATOR_MODE=OPENAI_API のとき、議事録本文（GAS が Doc にする）" },
+    "minutes_doc_id": { "type": ["string", "null"], "description": "現在のCHATGPT／OPENAI_API方式ではnull。本文はminutes_markdownへ入れGAS-AがDocを作成します。既存のinbox内Doc IDは互換用に読み取り可能。" },
+    "minutes_markdown": { "type": ["string", "null"], "description": "CHATGPT／OPENAI_API共通の議事録全文。##見出し・###小見出し・箇条書き・番号付き・Markdown表を使用し、GAS-AがinboxにGoogle Docを作成します。JSON内の改行は\\n。minutes_doc_idがnullの場合は空でない本文が必要。" },
     "confidence": { "type": "string", "enum": ["高", "中", "低"] },
     "reason": { "type": "string", "maxLength": 200, "description": "判定の根拠を1文で" },
     "sensitive": { "type": "boolean", "description": "経営・人事・評価・健康など個人に関わる話題を含むか" },
@@ -241,7 +291,7 @@ var InboxJudgementSchema_ = {
         }
       }
     },
-    "open_questions": { "type": "array", "items": { "type": "string" }, "description": "聞き取れない箇所・不確かな固有名詞や数字" }
+    "open_questions": { "type": "array", "items": { "type": "string" }, "description": "聞き取れない箇所・不確かな固有名詞や数字。テスト中に参照ファイルがない／読めず空扱いした場合はその旨も記載。" }
   }
 };
 
@@ -350,7 +400,7 @@ var InboxIngest_ = (function () {
           if ((doc.appProperties || {}).meeting_key && doc.appProperties.meeting_key !== key) throw new Error('議事録Docの会議マーカーが違います。');
           if (doc.mimeType !== 'application/vnd.google-apps.document' || !(doc.parents || []).some(function (p) { return p === inbox.id || row && p === row.meeting_folder_id; })) throw new Error('議事録Docがinbox・格納フォルダ内にありません。');
           blocks = Stage2Content_.read(docId);
-        } else if (j.minutes_markdown) blocks = Stage2Content_.blocks(j.minutes_markdown.split('\n').map(function (text) { return { type: 'paragraph', text: text }; }));
+        } else if (j.minutes_markdown) blocks = Stage2Content_.blocks(Stage2Content_.markdown(j.minutes_markdown));
         else throw new Error('議事録Docまたはminutes_markdownが必要です。');
         if (!blocks.length) throw new Error('議事録本文が空です。');
         if (steps.contentHash && steps.contentHash !== hash(blocks)) throw new Error('取り込み中に議事録本文が変更されました。');
@@ -1108,6 +1158,29 @@ var NotionTestEnvironment_ = (function () {
       } while (cursor);
       return out;
     }
+    function referenceProjects() {
+      if (!verified.tasks) throw new Error('テスト用タスクDBの確認が必要です。');
+      var titles=Object.values(verified.tasks.properties).filter(function(p){return p.type==='title';});
+      if(titles.length!==1)throw new Error('テスト用タスクDBのタイトル定義を確認してください。');
+      var rows=[],cursor=null,cursors=new Set(),seen=new Set();
+      do {
+        var body={page_size:100};if(cursor)body.start_cursor=cursor;
+        var result=request('post','data_sources/'+verified.tasks.sourceId+'/query',body);
+        if(!Array.isArray(result.results))throw new Error('Notionの一覧応答が不正です。既存参照ファイルは更新しません。');
+        result.results.forEach(function(page){
+          if(page.archived||page.in_trash)return;
+          if(!page.id||!page.parent||!(page.parent.type==='data_source_id'&&normalize(page.parent.data_source_id)===normalize(verified.tasks.sourceId)||page.parent.type==='database_id'&&normalize(page.parent.database_id)===normalize(ids.tasks)))throw new Error('参照候補にテスト用タスクDB以外のページが含まれています。');
+          if(seen.has(normalize(page.id)))throw new Error('Notionの参照候補が重複しています。再取得してください。');
+          seen.add(normalize(page.id));rows.push(RefExportPlan_.project(page));
+        });
+        cursor=result.has_more?result.next_cursor:null;
+        if(result.has_more&&(!cursor||cursors.has(cursor)))throw new Error('Notionのページ送りが不正です。');
+        if(cursor)cursors.add(cursor);
+        if(rows.length>5000||cursors.size>100)throw new Error('参照候補が上限を超えました。途中の内容で更新しません。');
+      }while(cursor);
+      rows.forEach(function(p){p.parent_ids=p.parent_ids.filter(function(id){return seen.has(normalize(id));});});
+      return rows;
+    }
     function createPage(payload) { var page = request('post', 'pages', payload); if (page.id) allowedPages.add(normalize(page.id)); return page; }
     function appendBlocks(id, children) { return request('patch', 'blocks/' + id + '/children', { children: children }); }
     function addInboxOptions() {
@@ -1127,7 +1200,7 @@ var NotionTestEnvironment_ = (function () {
     }
     return { properties: properties, dryRun: dryRun === 'true', schema: schema, inbox: discoverInbox, project: project, createPage: createPage,
       verifyMinutesPage: verifyMinutesPage, appendBlocks: appendBlocks, addInboxOptions: addInboxOptions,
-      updateReviewPage: updateReviewPage, prepareReviewStatus: prepareReviewStatus, projectDetails:function(id){return verifiedProjectInfo[id] || null;}, projects: projects,
+      updateReviewPage: updateReviewPage, prepareReviewStatus: prepareReviewStatus, projectDetails:function(id){return verifiedProjectInfo[id] || null;}, projects: projects, referenceProjects:referenceProjects,
       ids: { minutes: ids.minutes, tasks: ids.tasks } };
   }
   return { open: open, normalize: normalize };
@@ -1158,6 +1231,30 @@ function checkTestEnvironment() {
 
 function addTldvInboxStatusOptions() {
   if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_(); return Ledger_.withLock(function () { return NotionTestEnvironment_.open(true, 'inbox-options').addInboxOptions(); }); }
+
+
+// refExportPlan.js
+// 参照用に必要な項目だけを取り出します。権限・トークン・自由記述本文は出力しません。
+var RefExportPlan_=(function(){
+  function text(v){return String(v===undefined||v===null?'':v).trim();}
+  function list(v){return Array.from(new Set(ReviewSecurity_.list(v).map(text).filter(Boolean)));}
+  function masters(rows,at){
+    var omitted=0;
+    var people=rows.people.map(function(p){var email=text(p.google_email).toLowerCase();if(!/^[^\s@]+@premiere-mode\.co\.jp$/.test(email)){omitted++;return null;}return {name:text(p.name),google_email:email,notion_user_id:text(p.notion_user_id)||null,domains:list(p.domains)};}).filter(Boolean);
+    if(new Set(people.map(function(p){return p.google_email;})).size!==people.length)throw new Error('社員マスタの会社メールが重複しています。');
+    var folders=rows.folders.filter(function(f){return text(f.placement);}).map(function(f){return {placement:text(f.placement),notion_domain:text(f.notion_domain)||null};});
+    var clients=rows.clients.filter(function(c){return text(c.client_name);}).map(function(c){return {client_name:text(c.client_name),domains:list(c.domains).map(function(d){return d.toLowerCase();})};});
+    return {data:{schema_version:1,env:'test',generated_at:at,folders:folders,clients:clients,internal:list(rows.internal).map(function(v){return v.toLowerCase();}),people:people},omittedPeople:omitted};
+  }
+  function project(page){
+    var props=page.properties||{},titles=Object.keys(props).filter(function(k){return props[k].type==='title';});
+    if(titles.length!==1)throw new Error('プロジェクト・タスクのタイトルを1つに特定できません。');
+    var status=props['ステータス'],domains=props['事業部領域'],parent=props['親アイテム'],due=props['期日'];
+    return {id:page.id,title:(props[titles[0]].title||[]).map(function(t){return t.plain_text||t.text&&t.text.content||'';}).join(''),status:status&&['status','select'].includes(status.type)&&status[status.type]?status[status.type].name||null:null,
+      domains:domains&&domains.type==='multi_select'?(domains.multi_select||[]).map(function(d){return d.name;}):[],parent_ids:parent&&parent.type==='relation'?(parent.relation||[]).map(function(r){return r.id;}):[],due:due&&due.type==='date'&&due.date?due.date.start:null};
+  }
+  return {masters:masters,project:project};
+})();
 
 
 // review.js
@@ -1788,8 +1885,60 @@ var Stage2Content_ = (function () {
     }
     return blocks(elements);
   }
-  function html(text) { return '<html><body><p>' + String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '</p><p>') + '</p></body></html>'; }
-  return { blocks: blocks, read: read, html: html };
+  function inline(value) {
+    return clean(String(value||'').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')).replace(/\*\*([^*]+)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1');
+  }
+  function cells(line) {
+    var result=[],cell='',escaped=false;
+    Array.from(line.trim()).forEach(function(c){
+      if(escaped){cell+=(c==='|'||c==='\\')?c:'\\'+c;escaped=false;}
+      else if(c==='\\')escaped=true;
+      else if(c==='|'){result.push(cell.trim());cell='';}
+      else cell+=c;
+    });
+    if(escaped)cell+='\\';result.push(cell.trim());
+    if(line.trim().startsWith('|'))result.shift();
+    if(result.length&&result[result.length-1]===''&&line.trim().endsWith('|'))result.pop();
+    return result;
+  }
+  function markdown(text) {
+    var lines=String(text||'').replace(/\r\n?/g,'\n').split('\n'),out=[],fenced=false;
+    for(var i=0;i<lines.length;i++){
+      var line=lines[i].trim(),match;
+      if(/^```/.test(line)){fenced=!fenced;continue;}
+      if(!line)continue;
+      if(fenced){out.push({type:'paragraph',text:line});continue;}
+      if(line.includes('|')&&i+1<lines.length){
+        var divider=cells(lines[i+1]);
+        if(divider.length&&divider.every(function(v){return /^:?-{3,}:?$/.test(v);})){
+          var header=cells(line),rows=[header];if(header.length!==divider.length)throw new Error('Markdown表の列数が一致しません。');i+=2;
+          for(;i<lines.length&&lines[i].trim()&&lines[i].includes('|');i++){var row=cells(lines[i]);if(row.length!==header.length)throw new Error('Markdown表の列数が一致しません。セル内の縦棒は\\|で記載してください。');rows.push(row);}i--;
+          out.push({type:'table',rows:rows.map(function(r){return r.map(inline);})});continue;
+        }
+      }
+      if((match=/^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line)))out.push({type:match[1].length<=2?'heading_2':'heading_3',text:inline(match[2])});
+      else if((match=/^[-*+]\s+(.+)$/.exec(line)))out.push({type:'bulleted_list_item',text:inline(match[1])});
+      else if((match=/^\d+[.)]\s+(.+)$/.exec(line)))out.push({type:'numbered_list_item',text:inline(match[1])});
+      else out.push({type:'paragraph',text:inline(line)});
+    }
+    if(fenced)throw new Error('Markdownのコード囲みが閉じていません。');
+    return out;
+  }
+  function html(text) {
+    function escape(v){return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+    var parts=['<!doctype html><html><head><meta charset="UTF-8"></head><body>'],list=null;
+    markdown(text).forEach(function(e){
+      var tag=e.type==='bulleted_list_item'?'ul':e.type==='numbered_list_item'?'ol':null;
+      if(list!==tag){if(list)parts.push('</'+list+'>');if(tag)parts.push('<'+tag+'>');list=tag;}
+      if(tag)parts.push('<li>'+escape(e.text)+'</li>');
+      else if(e.type==='table'){
+        parts.push('<table border="1"><thead><tr>'+e.rows[0].map(function(v){return '<th>'+escape(v)+'</th>';}).join('')+'</tr></thead><tbody>');
+        e.rows.slice(1).forEach(function(row){parts.push('<tr>'+row.map(function(v){return '<td>'+escape(v)+'</td>';}).join('')+'</tr>');});parts.push('</tbody></table>');
+      }else{var heading=e.type==='heading_2'?'h2':e.type==='heading_3'?'h3':'p';parts.push('<'+heading+'>'+escape(e.text)+'</'+heading+'>');}
+    });
+    if(list)parts.push('</'+list+'>');return parts.join('')+'</body></html>';
+  }
+  return { blocks: blocks, read: read, html: html, markdown: markdown };
 })();
 
 function seedFixtureInbox() {
@@ -2117,8 +2266,9 @@ function syncOrganizerRegistrations_(){
       var matches=current.filter(function(r){return r.email===email;});if(matches.length>1)throw new Error('台帳の登録メールが重複しています。');
       plans.push({existing:matches[0],data:{email:email,registered_at:value.registered?value.registered_at:'',trigger_id:value.registered?value.trigger_id:'',last_run_at:value.last_run_at||'',last_result:value.registered?value.last_result:'登録解除'}});
     });
-    plans.forEach(function(p){console.log('主催者登録の同期予定：'+p.data.email+'／'+p.data.last_result);if(c.DRY_RUN==='true'){ledger.log('主催者登録の同期予定',p.data.email,p.data);return;}
+    plans.forEach(function(p){if(c.DRY_RUN==='true'){console.log('主催者登録の同期予定：'+p.data.email+'／'+p.data.last_result);ledger.log('主催者登録の同期予定',p.data.email,p.data);return;}
       if(!p.existing)ledger.append('organizers',p.data);else{var headers=Ledger_.headers.organizers.split(',');book.getSheetByName('organizers').getRange(p.existing._row,1,1,headers.length).setValues([headers.map(function(k){var s=String(p.data[k]||'');return /^[=+@]/.test(s)?"'"+s:s;})]);}
+      console.log('主催者登録を同期しました：'+p.data.email+'／'+p.data.last_result);
     });
     return {dryRun:c.DRY_RUN==='true',count:plans.length};
   });
