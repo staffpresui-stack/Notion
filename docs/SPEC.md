@@ -84,15 +84,17 @@ MTG記録/
 
 ## 5. GAS-B（主催者用）
 
-- Web アプリ（`executeAs: USER_ACCESSING`, `access: DOMAIN`）。画面：登録状態、［この PC のアカウントで登録］［登録を解除］。
-- 登録：`ScriptApp.newTrigger('moverRun').timeBased().everyMinutes(15)`（`MOVER_INTERVAL_MIN`）。同じユーザーの既存トリガーがあれば作らない。GAS-A の台帳 `organizers` シートに登録状況を書く（GAS-B から台帳へ書く権限が必要。無理なら GAS-A の Web アプリの `doPost` に登録情報を送る。要確認）。
+- Webアプリは `executeAs: USER_ACCESSING`。初回テストは `access: MYSELF` でfinance@だけ。社員展開時に会社メールと共有ドライブ権限を確認してからDOMAINへ拡大します。登録状態、［この PC のアカウントで登録］［登録を解除］［今すぐ確認する］を表示します。
+- 登録は本人のUserPropertiesと、本人が作成するmoverRunの時間主導トリガー（既定15分）を使用し、二重登録しません。DRY_RUN=trueは登録予定だけです。
+- GAS-Aへの受け渡しは `_test/_organizers/organizer_<メールSHA256>.json`。GAS-Aは公開properties、固定名、DriveのlastModifyingUser.emailAddressと本人メールの一致を検証し、organizersへ反映します。台帳の社員共有と公開doPostは使いません。syncOrganizerRegistrationsで手動確認し、finance@のsetupOrganizerSyncTriggerで15分同期を設定できます。DRY_RUN=trueでは台帳本体に書きません。解除はトリガーIDを空にして登録解除を反映し、行は削除しません。
 - `moverRun`：
-  1. Calendar Advanced Service `Calendar.Events.list('primary', {timeMin: 現在-48時間, timeMax: 現在-MOVER_WAIT_MIN, singleEvents:true, supportsAttachments:true})`。
-  2. 自分が主催者（`organizer.self == true`）で `conferenceData` が Meet、`attachments` がある予定だけ。
-  3. 添付の `fileId` ごとに、MIME とファイル名から kind を判定（動画＝recording、文書で「文字起こし」「Transcript」＝transcript、「Gemini」「メモ」＝gemini）。判定できないものは移動せずログ。
-  4. `_system/00_受信/{folder_key}/` を作成（既にあれば使う）し、ファイルを移動。`appProperties` を付ける。
-  5. `manifest.json` を作る（下記）。全ファイル移動後に `status: "ready"`。
-  6. 録画の処理が終わっていない（添付がまだ揃わない）予定は次回に回す。予定終了から48時間たっても揃わなければ、揃った分だけで `ready` にし `missing` に残りを書く。
+  1. Calendar.Events.list('primary')をページングし、現在-72時間〜現在の予定を取得します。Events.listはsupportsAttachments非対応なので指定しません。終了時刻とMOVER_WAIT_MIN（既定20分）は別途判定します。指定テスト予定が一覧外ならEvents.getで再取得し、48時間の待機期限を取りこぼしません。
+  2. 初回版はMOVER_TEST_EVENT_IDで指定した1件、自分主催（organizer.selfと実メール一致）、Meet付き、終了済み、終日・キャンセル以外だけ。社員・本番の全会議走査はまだ許可しません。
+  3. 添付fileIdの実MIME・名前から録画／文字起こし／Geminiメモを判定します。同種複数は自動選択せず停止、不明は移動しません。自分所有でない・別ドライブ・別会議・ショートカットは処理しません。
+  4. 本番切替前は指定共有ドライブの `_system/_test/00_受信/{folder_key}/` に限定。My Driveの添付を同じIDで移動し、appPropertiesにmeeting_key・kindを付けます。受け渡し用フォルダの目印には別GASから読めるpropertiesを使います。ID・実親階層・共有ドライブ所属・移動能力を検査します。
+  5. 全ファイル移動後にmanifest.jsonをreadyで作成。UserPropertiesのmover:*、会議フォルダ、添付マーカーで再実行時の重複移動・作成を避けます。途中失敗は同じフォルダから再開します。削除・コピーへの切替はしません。
+  6. 3種が揃わない場合は待機し、予定終了から48時間後は揃った分だけreadyにしmissingに不足を記録します。全て不足の場合も不足を明示し、人が確認してから後段へ進めます。
+- 実機試験の作成・設定・デプロイ・共有ドライブ所有権と予定添付リンクの確認は `ORGANIZER_TEST.md`。本人のMy Driveから共有ドライブへの移動で個人所有から組織所有へ変わるため、実権限・閲覧維持は実機で確認します。
 - manifest.json：
 ```json
 {

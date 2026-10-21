@@ -46,7 +46,9 @@ GAS エディタ「プロジェクトの設定」＞「スクリプト プロパ
 | ENV | `test` / `prod` | |
 | MOVER_INTERVAL_MIN | `15` | |
 | MOVER_WAIT_MIN | `20` | 会議終了から移動を始めるまでの時間 |
-| CORE_WEBAPP_URL | | 登録情報を GAS-A に送る場合の送り先（要確認） |
+| MOVER_TEST_EVENT_ID | | GAS-B実機テスト対象のCalendar API予定ID。指定した1件のみ処理 |
+| FOLDER_SYSTEM_ID / FOLDER_SYSTEM_TEST_ID | | 指定共有ドライブの_systemと_test。GAS-Bで実階層を検証 |
+| DRY_RUN | true | falseは本人が登録しテスト移動を実行するときだけ。AとBで別設定 |
 
 ## 段階3の確認画面
 
@@ -57,3 +59,5 @@ GAS エディタ「プロジェクトの設定」＞「スクリプト プロパ
 マスタ・HTMLファイル・デプロイ・試験順は docs/REVIEW_TEST.md を参照してください。
 
 段階3の修正版は新しいプロパティを追加しません。setupReviewNotionStatusでテストDBの確認状態と既存ページを準備します。更新・計測の手順は docs/REVIEW_UPDATE.md を参照してください。
+
+GAS-Bの具体値・作成手順は docs/ORGANIZER_TEST.md。今回はfinance@だけをコードで許可します。登録情報は_test/_organizersからGAS-Aへ同期するため、CORE_WEBAPP_URL・台帳ID・NotionトークンはGAS-Bに不要です。
