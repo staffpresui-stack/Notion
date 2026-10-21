@@ -8,7 +8,7 @@ var Stage2Drive_ = (function () {
     return c;
   }
   function escape(s) { return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
-  function meta(id) { return Drive.Files.get(id, { supportsAllDrives: true, fields: 'id,name,mimeType,parents,driveId,trashed,ownedByMe,appProperties,createdTime,modifiedTime,capabilities(canEdit,canAddChildren)' }); }
+  function meta(id) { return GoogleApi_.get(id, { supportsAllDrives: true, fields: 'id,name,mimeType,parents,driveId,trashed,ownedByMe,appProperties,createdTime,modifiedTime,capabilities(canEdit,canAddChildren)' }); }
   function list(parent, c, query) {
     var all = [], token;
     do {
@@ -16,7 +16,7 @@ var Stage2Drive_ = (function () {
       if (c.SHARED_DRIVE_ID) { args.corpora = 'drive'; args.driveId = c.SHARED_DRIVE_ID; }
       else args.corpora = 'user';
       if (token) args.pageToken = token;
-      var page = Drive.Files.list(args); all = all.concat(page.files || []); token = page.nextPageToken;
+      var page = GoogleApi_.list(args); all = all.concat(page.files || []); token = page.nextPageToken;
     } while (token);
     return all;
   }
@@ -54,7 +54,7 @@ var Stage2Drive_ = (function () {
       if (matches.length) return matches[0];
       if (!create) throw new Error('フォルダがありません: ' + name);
       write(); var app = { minutes_test_env: c.TEST_ENV_KEY }; if (meetingKey) app.meeting_key = meetingKey;
-      return Drive.Files.create({ name: name, mimeType: folderMime, parents: [parent], appProperties: app }, null, { supportsAllDrives: true, fields: 'id,name,mimeType,parents,appProperties' });
+      return GoogleApi_.create({ name: name, mimeType: folderMime, parents: [parent], appProperties: app }, null, { supportsAllDrives: true, fields: 'id,name,mimeType,parents,appProperties' });
     }
     function move(id, destination, kind, meetingKey) {
       write(); var m = within(id); within(destination);
@@ -63,14 +63,14 @@ var Stage2Drive_ = (function () {
       if (kind) app.kind = kind; if (meetingKey) app.meeting_key = meetingKey;
       var args = { supportsAllDrives: true, fields: 'id,name,parents' };
       if (!(m.parents || []).includes(destination)) { args.addParents = destination; args.removeParents = (m.parents || []).join(','); }
-      var result=Drive.Files.update({ appProperties: app }, id, null, args); delete metadata[id]; return result;
+      var result=GoogleApi_.update({ appProperties: app }, id, null, args); delete metadata[id]; return result;
     }
     function createFile(parent, name, content, mime, kind, meetingKey) {
       write(); within(parent);
       var app = { minutes_test_env: c.TEST_ENV_KEY, kind: kind }; if (meetingKey) app.meeting_key = meetingKey;
       var body = { name: name, mimeType: mime, parents: [parent], appProperties: app };
       var inputMime = mime === 'application/vnd.google-apps.document' ? 'text/html' : mime;
-      return Drive.Files.create(body, Utilities.newBlob(content, inputMime, name), { supportsAllDrives: true, fields: 'id,name,mimeType,parents,appProperties' });
+      return GoogleApi_.create(body, Utilities.newBlob(content, inputMime, name), { supportsAllDrives: true, fields: 'id,name,mimeType,parents,appProperties' });
     }
     function readJSON(id) {
       var m = within(id); if (m.mimeType !== 'application/json' && !m.name.endsWith('.json')) throw new Error('JSONファイルではありません。');
@@ -103,7 +103,7 @@ var Stage2Drive_ = (function () {
     function ensure(parent, name, kind) {
       var matches = list(parent, c, "mimeType='" + folderMime + "'").filter(function (f) { return (f.appProperties || {}).minutes_test_env === c.TEST_ENV_KEY && (f.appProperties || {}).kind === kind; });
       if (matches.length > 1) throw new Error('テスト準備の同一マーカーが複数あります。');
-      return matches[0] || Drive.Files.create({ name: name, mimeType: folderMime, parents: [parent], appProperties: { minutes_test_env: c.TEST_ENV_KEY, kind: kind } }, null, { supportsAllDrives: true, fields: 'id,name,parents' });
+      return matches[0] || GoogleApi_.create({ name: name, mimeType: folderMime, parents: [parent], appProperties: { minutes_test_env: c.TEST_ENV_KEY, kind: kind } }, null, { supportsAllDrives: true, fields: 'id,name,parents' });
     }
     var top = ensure('root', 'MTG議事録自動化（開発専用）', 'top'), system = ensure(top.id, '_system', 'system'), root = ensure(system.id, '_test', 'test_root');
     if (c.FOLDER_SYSTEM_TEST_ID && c.FOLDER_SYSTEM_TEST_ID !== root.id) throw new Error('既存のFOLDER_SYSTEM_TEST_IDは上書きしません。');
@@ -114,7 +114,7 @@ var Stage2Drive_ = (function () {
     else {
       var existing = drive.children(root.id).filter(function (f) { return f.mimeType === 'application/vnd.google-apps.spreadsheet' && f.name === 'MTG議事録 台帳（テスト）'; });
       if (existing.length > 1) throw new Error('テスト台帳が複数あります。');
-      var file = existing[0] || Drive.Files.create({ name: 'MTG議事録 台帳（テスト）', mimeType: 'application/vnd.google-apps.spreadsheet', parents: [root.id], appProperties: { minutes_test_env: c.TEST_ENV_KEY } }, null, { supportsAllDrives: true, fields: 'id' });
+      var file = existing[0] || GoogleApi_.create({ name: 'MTG議事録 台帳（テスト）', mimeType: 'application/vnd.google-apps.spreadsheet', parents: [root.id], appProperties: { minutes_test_env: c.TEST_ENV_KEY } }, null, { supportsAllDrives: true, fields: 'id' });
       c.LEDGER_SPREADSHEET_ID = file.id; properties.setProperty('LEDGER_SPREADSHEET_ID', file.id); book = SpreadsheetApp.openById(file.id);
     }
     var workspace = populate(c, drive, book);
@@ -180,7 +180,7 @@ var Stage2Drive_ = (function () {
     if (c.DRY_RUN === 'true') { console.log('準備予定：_testだけに目印を付け、不足フォルダ・台帳シート・サンプルマスタを追加します。設定やDriveには書き込みません。'); return { dryRun: true, root: root.id, ledger: ledgerFile.id }; }
     c.TEST_ENV_KEY = c.TEST_ENV_KEY || Utilities.getUuid();
     // ここからのDrive書き込み先は_test自身とその子だけです。
-    if (app.minutes_test_env !== c.TEST_ENV_KEY || app.kind !== 'test_root') Drive.Files.update({ appProperties: Object.assign({}, app, { minutes_test_env: c.TEST_ENV_KEY, kind: 'test_root' }) }, root.id, null, { supportsAllDrives: true, fields: 'id' });
+    if (app.minutes_test_env !== c.TEST_ENV_KEY || app.kind !== 'test_root') GoogleApi_.update({ appProperties: Object.assign({}, app, { minutes_test_env: c.TEST_ENV_KEY, kind: 'test_root' }) }, root.id, null, { supportsAllDrives: true, fields: 'id' });
     ['SHARED_DRIVE_ID', 'FOLDER_SYSTEM_TEST_ID', 'LEDGER_SPREADSHEET_ID', 'TEST_ENV_KEY'].forEach(function (k) { properties.setProperty(k, c[k]); });
     properties.setProperty('FOLDER_SYSTEM_ID', system.id); c.FOLDER_SYSTEM_ID = system.id;
     var drive = open(c), workspace = populate(c, drive, book);

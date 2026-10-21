@@ -1,3 +1,7 @@
+# Drive/Docsの一時エラー再試行（最新）
+
+4c27762反映後にテストルートmetaがInternal Errorで断続的に失敗するとユーザー実機報告。共通GoogleApi_をA/Bへ組込み、get/list/update/create/Docs getの一時障害を初回＋4回バックオフ。通常ファイル/フォルダは事前IDを維持して再送、Doc等は目印照合で結果不明時に再作成せず保留します。スクリプトプロパティのpending記録と本文ハッシュを維持し、親移動の再試行も差分だけ。スコープ・サービス・手動プロパティ追加なし。手順はGOOGLE_RETRY_UPDATE.md。GAS実行・Google実書込は未実施。PC候補の実機状況もガイドへ追記しました。ローカル165件とbuild/check/smokeが成功。
+
 # ローカルCodex生成への変更（最新）
 
 d4a570eの参照出力・MarkdownのDoc表示・04のNotion取り込みはユーザー実機合格。クラウドのアップロードは安全チェックで失敗。今回OPENAI_APIは不採用とし、GAS-Aに原文TXTの新規書出しと任意15分トリガー、PCにread-onlyのCodex生成とJSON検証・非上書き保存・同期完了印、launchd/cron例を追加。GASは完了印のハッシュが一致するまで待ちます。GASのDocs読取・既存TXTの非上書き・manifest追記・範囲外拒否、ローカルの重複防止・原文変更・スキーマ・同期完了と既存ingestをモックで検証。PC実機、GAS実行、Plus認証、Drive同期、launchdは未実施。手順はLOCAL_CODEX_TEST.md。CLIは同梱0.163.0ヘルプ、Plusログイン対応はOpenAI公式GitHub README、Docsタブ仕様は公式本文で確認。開発者サイト本文はこのネットワークから取得できませんでした。153件のテストとbuild/check/smokeが成功。

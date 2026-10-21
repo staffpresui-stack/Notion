@@ -149,7 +149,7 @@ test('マイドライブ用Driveアダプタはルート外・ショートカッ
   const meta = { root: { id: 'root', name: '_test', parents: ['system'], ownedByMe: true, mimeType: 'application/vnd.google-apps.folder', appProperties: { minutes_test_env: 'uuid', kind: 'test_root' } }, system: { id: 'system', name: '_system', appProperties: { minutes_test_env: 'uuid', kind: 'system' } }, safe: { id: 'safe', parents: ['root'] }, outside: { id: 'outside', parents: [] }, shortcut: { id: 'shortcut', parents: ['root'], mimeType: 'application/vnd.google-apps.shortcut' } };
   let writes = 0;
   const ctx = vm.createContext({ Drive: { Files: { get: id => meta[id], update() { writes++; } } } });
-  load(ctx, ['stage2Drive.js']);
+  load(ctx, ['googleApi.generated.js', 'stage2Drive.js']);
   const config = { ENV: 'test', DRY_RUN: 'true', TEST_ENV_KEY: 'uuid', FOLDER_SYSTEM_TEST_ID: 'root' }, drive = ctx.Stage2Drive_.open(config);
   assert.equal(drive.within('safe').id, 'safe'); assert.throws(() => drive.within('outside'), /ルート外/); assert.throws(() => drive.within('shortcut'), /ショートカット/);
   assert.throws(() => drive.move('safe', 'root'), /DRY_RUN/); assert.equal(writes, 0);

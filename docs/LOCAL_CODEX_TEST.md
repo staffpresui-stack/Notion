@@ -1,3 +1,5 @@
+最新のDrive一時エラー対策は[GOOGLE_RETRY_UPDATE.md](GOOGLE_RETRY_UPDATE.md)を先に反映してください。
+
 # PC上のCodexによる生成（テスト限定）
 
 ## 今回の変更と確認できた範囲
@@ -6,7 +8,7 @@ d4a570eはユーザー実機で参照出力・MarkdownからのDoc・Notion作�
 
 ローカルCLIをChatGPT（premiere・Plus）でログインして起動します。APIキーは不要です。**モデルの推論はCodexのクラウドで行われ、会議本文を送信します。** PC上ではファイルの読取・保存だけを行います。利用枠・認証の期限・PCのスリープ・Drive未接続で停止する場合があります。失敗を成功扱いにはしません。
 
-この開発環境で確認できるOSはLinux x86_64、CLIは0.163.0です。ユーザーのPCは見えておらず、OS・Driveパソコン版の有無・マウント先・ログイン状態は未確認です。Driveパソコン版はmacOS/Windows向けで、Linux版はありません。下のlaunchd例はmacOS用、cronは対応するマウントを用意できるPC向けです。Windows用タスクスケジューラは今回の対象外です。
+この開発環境で確認できるOSはLinux x86_64、CLIは0.163.0です。最新のユーザー報告では候補MacはmacOS 15.7、Driveパソコン版は別アカウント利用中でfinance@未追加、Codex未導入です。実行PCは社内で選定中で、こちらから直接の確認・設定はしていません。Driveパソコン版はmacOS/Windows向けで、Linux版はありません。下のlaunchd例はmacOS用、cronは対応するマウントを用意できるPC向けです。Windows用タスクスケジューラは今回の対象外です。
 
 Codexアプリのローカル自動化機能はアプリのバージョン・PCで要確認です。今回の手順はCLI＋launchdに統一します。CLIの対応機能は`codex exec --help`で確認し、`--ignore-user-config`と`--ignore-rules`が無い旧版では実行を拒否します。最新版へ更新してください。ChatGPT Plusで使えることはOpenAI公式GitHubのREADMEで確認し、フラグはCLI同梱ヘルプで確認しました（開発者サイト本文はこのネットワークから取得不可）。Plusでのログイン・無人実行・Drive同期はユーザーPCで次の順に実機確認します。
 

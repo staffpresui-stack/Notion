@@ -37,6 +37,8 @@
 
 - d4a570eはユーザー実機で参照出力・MarkdownのDoc化・Notion取り込みまで合格。クラウド予約タスクのDrive書込は安全チェックで失敗。高リスクの接続許可は使わず、OPENAI_API方式は採用しません。現在の生成方式はPC上のChatGPTログイン済みCodex CLI（LOCAL_CODEX）。GAS-Aが原文TXTを新規出力し、Codexはツール無効・read-onlyで判定JSONを返し、ローカルrunnerが検証して_test/inboxへ保存します。同期完了印のハッシュが一致してからGASが取り込みます。最新手順は `docs/LOCAL_CODEX_TEST.md`。元のDocs・既存TXTは上書きしません。PC実機の認証・同期・定期実行は未確認です。
 
+- 4c27762のGAS-A反映後、Driveの初回metaで断続的なInternal Errorがユーザー実機で報告されました。Drive/Docs共通再試行（初回＋4回、0.5→1→2→4秒）を追加。権限/不在等は再試行しません。作成は事前IDまたは目印照合で二重化を防ぎ、ID非対応の結果不明は保留。手順は `docs/GOOGLE_RETRY_UPDATE.md`。候補MacはmacOS 15.7、Drive別アカウント利用中・finance@未追加、Codex未導入、実行PCは未決です。
+
 ## 1. 最初に読む順番
 
 1. このファイル（全体・ルール・段階）

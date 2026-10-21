@@ -64,7 +64,7 @@ var DriveUtil_ = (function () {
   function folders(parent, driveId) {
     var all = [], token;
     do {
-      var r = Drive.Files.list({ q: "'" + escape(parent) + "' in parents and trashed = false and mimeType = '" + folderMime + "'",
+      var r = GoogleApi_.list({ q: "'" + escape(parent) + "' in parents and trashed = false and mimeType = '" + folderMime + "'",
         corpora: 'drive', driveId: driveId, supportsAllDrives: true, includeItemsFromAllDrives: true,
         pageSize: 100, pageToken: token, fields: 'nextPageToken,files(id,name,parents,driveId,mimeType)' });
       all = all.concat(r.files || []); token = r.nextPageToken;
@@ -78,9 +78,9 @@ var DriveUtil_ = (function () {
   }
   function verifyTestRoot(c) {
     if (!c.SHARED_DRIVE_ID) return Stage2Drive_.open(c).root;
-    var root = Drive.Files.get(c.FOLDER_SYSTEM_TEST_ID, { supportsAllDrives: true, fields: 'id,name,parents,driveId,mimeType' });
+    var root = GoogleApi_.get(c.FOLDER_SYSTEM_TEST_ID, { supportsAllDrives: true, fields: 'id,name,parents,driveId,mimeType' });
     if (root.name !== '_test' || root.driveId !== c.SHARED_DRIVE_ID || root.mimeType !== folderMime || !root.parents || root.parents.length !== 1) throw new Error('テスト用フォルダを確認してください。');
-    var parent = Drive.Files.get(root.parents[0], { supportsAllDrives: true, fields: 'id,name,driveId' });
+    var parent = GoogleApi_.get(root.parents[0], { supportsAllDrives: true, fields: 'id,name,driveId' });
     if (parent.name !== '_system' || parent.driveId !== c.SHARED_DRIVE_ID) throw new Error('_system/_test 配下が必要です。');
     return root;
   }
@@ -114,13 +114,13 @@ function exportRef_(){return Ledger_.withLock(function(){
   if(c.DRY_RUN==='true'){plans.forEach(function(p){console.log(p.name+'を'+(p.file?'同じIDで更新':'新規作成')+'する予定です。');});return {dryRun:true,counts:counts};}
   var ids={};
   plans.forEach(function(p){
-    var destination=Drive.Files.get(ref.id,{supportsAllDrives:true,fields:'id,name,parents,mimeType,driveId,trashed'});
+    var destination=GoogleApi_.get(ref.id,{supportsAllDrives:true,fields:'id,name,parents,mimeType,driveId,trashed'});
     if(destination.trashed||destination.name!=='ref'||destination.mimeType!=='application/vnd.google-apps.folder'||!destination.parents||destination.parents.length!==1||destination.parents[0]!==drive.root.id||c.SHARED_DRIVE_ID&&destination.driveId!==c.SHARED_DRIVE_ID)throw new Error('書き込み直前にrefフォルダの所属が変わりました。');
     var blob=Utilities.newBlob(JSON.stringify(p.data,null,2),'application/json',p.name),saved;
     // 実行直前も既存ファイルの所属を確認し、移動・名前変更はしません。
-    if(p.file){var f=Drive.Files.get(p.file.id,{supportsAllDrives:true,fields:'id,name,parents,mimeType,trashed,driveId'});
+    if(p.file){var f=GoogleApi_.get(p.file.id,{supportsAllDrives:true,fields:'id,name,parents,mimeType,trashed,driveId'});
       if(f.trashed||f.name!==p.name||!f.parents||f.parents.length!==1||f.parents[0]!==ref.id||c.SHARED_DRIVE_ID&&f.driveId!==c.SHARED_DRIVE_ID||!['application/json','text/plain','application/octet-stream'].includes(f.mimeType))throw new Error('更新直前に参照ファイルの状態が変わりました。');
-      saved=Drive.Files.update({},p.file.id,blob,{supportsAllDrives:true,fields:'id'});
+      saved=GoogleApi_.update({},p.file.id,blob,{supportsAllDrives:true,fields:'id'});
     }else{props.setProperty(p.pendingKey,at);saved=drive.createFile(ref.id,p.name,JSON.stringify(p.data,null,2),'application/json','reference');}
     if(!saved||!saved.id)throw new Error('参照ファイルの保存結果を確認できません。');
     props.deleteProperty(p.pendingKey);ids[p.name]=saved.id;console.log(p.name+'を書き出しました。ID：'+saved.id);
@@ -136,6 +136,88 @@ function setupRefExportTrigger(){assertFinanceOperator_();return Ledger_.withLoc
   console.log('毎朝6時台の参照更新トリガーを確認しました。');return {dryRun:false,triggerId:String(trigger.getUniqueId())};
 });}
 function removeRefExportTrigger(){assertFinanceOperator_();return Ledger_.withLock(function(){var c=Stage2Drive_.config();if(c.DRY_RUN==='true'){console.log('自分の参照更新トリガーだけを解除する予定です。');return;}ScriptApp.getProjectTriggers().filter(function(t){return t.getHandlerFunction()==='refExportTick_';}).forEach(function(t){ScriptApp.deleteTrigger(t);});console.log('自分の参照更新トリガーを解除しました。');});}
+
+
+// googleApi.generated.js
+// shared/googleApi.jsから生成します。
+// Advanced Servicesの一時障害だけを再試行します。本文・ID・エラー原文はログに出しません。
+var GoogleApi_=(function(){
+  var waits=[500,1000,2000,4000];
+  function status(error){
+    var details=error&&error.details||{},nested=error&&error.error||details.error||{},message=String(error&&error.message||error||'')+' '+JSON.stringify(details);
+    var codes=[error&&error.code,error&&error.statusCode,error&&error.responseCode,details.code,nested.code].map(Number).filter(function(n){return n>=400&&n<=599;});
+    if(codes.length)return codes[0];
+    var match=message.match(/(?:HTTP\s*|status(?:\s*code)?[\s:=]*|error\s*[:=]\s*|["']?code["']?\s*[:=]\s*)([45]\d\d)\b/i);return match?Number(match[1]):0;
+  }
+  function classify(error){
+    var details=error&&error.details||{},message=String(error&&error.message||error||''),code=status(error);
+    var info=message+' '+JSON.stringify(details);
+    var rate=/\b(?:userRateLimitExceeded|rateLimitExceeded|RATE_LIMIT_EXCEEDED)\b|rate[ _-]*limit(?:[ _-]*exceeded)?|too many requests/i.test(info);
+    if(code>=400&&code<500)return code===429||code===403&&rate?'rate':'permanent';
+    if(code>=500&&code<=599)return 'transient';
+    if(rate)return 'rate';
+    return /internal[ _-]*error|backend[ _-]*error|\bINTERNAL\b|\bUNAVAILABLE\b|service unavailable|bad gateway|gateway timeout/i.test(info)?'transient':'permanent';
+  }
+  function pause(label,index){console.log(label+'：一時エラーのため'+waits[index]+'ミリ秒後に再試行します（'+(index+1)+'/4）。');Utilities.sleep(waits[index]);}
+  function call(label,fn){for(var i=0;;i++){try{return fn(i);}catch(e){if(classify(e)==='permanent'||i===waits.length)throw e;pause(label,i);}}}
+  function get(id,args){return call('Drive取得',function(){return Drive.Files.get(id,args);});}
+  function list(args){return call('Drive一覧取得',function(){return Drive.Files.list(args);});}
+  function docsGet(id,args){return call('Docs取得',function(){return Docs.Documents.get(id,args);});}
+  function update(body,id,blob,args){return call('Drive更新',function(attempt){
+    var options=Object.assign({},args);
+    // 移動済みの応答だけ失敗した場合、現在の親に合わせて差分を作り直します。
+    if(attempt&&(options.addParents||options.removeParents)){
+      var current=get(id,{supportsAllDrives:true,fields:'id,parents'}),parents=current.parents||[];
+      if(options.addParents){var add=options.addParents.split(',').filter(function(p){return !parents.includes(p);});if(add.length)options.addParents=add.join(',');else delete options.addParents;}
+      if(options.removeParents){var remove=options.removeParents.split(',').filter(function(p){return parents.includes(p);});if(remove.length)options.removeParents=remove.join(',');else delete options.removeParents;}
+    }
+    return Drive.Files.update(body,id,blob,options);
+  });}
+  function stable(value){if(Array.isArray(value))return value.map(stable);if(value&&typeof value==='object'){var o={};Object.keys(value).sort().forEach(function(k){o[k]=stable(value[k]);});return o;}return value;}
+  function hash(value){return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,JSON.stringify(stable(value)),Utilities.Charset.UTF_8).map(function(b){return ('0'+((b+256)%256).toString(16)).slice(-2);}).join('');}
+  function create(body,blob,args){
+    var metadata=JSON.parse(JSON.stringify(body)),token=hash(metadata),key='GOOGLE_CREATE_PENDING:'+token,props=PropertiesService.getScriptProperties();
+    var record=props.getProperty(key);record=record?JSON.parse(record):null;
+    var contentHash=hash(blob?blob.getDataAsString('UTF-8'):null);
+    if(record&&record.contentHash!==contentHash)throw new Error('前回作成結果が不明なまま本文が変わりました。二重作成せず停止します。');
+    var first=!record;
+    if(!record){
+      record={token:token,contentHash:contentHash};
+      // Docs/Sheets等は事前IDに非対応。フォルダ・通常ファイルは同じIDで安全に再送できます。
+      if((!/^application\/vnd\.google-apps\./.test(metadata.mimeType||'')||metadata.mimeType==='application/vnd.google-apps.folder')&&typeof Drive.Files.generateIds==='function'){
+        var ids=call('Drive作成ID取得',function(){return Drive.Files.generateIds({count:1,space:'drive',fields:'ids'});});
+        if(!ids.ids||ids.ids.length!==1)throw new Error('Driveの作成IDを取得できません。');record.id=ids.ids[0];
+      }
+      props.setProperty(key,JSON.stringify(record));
+    }
+    metadata.appProperties=Object.assign({},metadata.appProperties||{},{minutes_create_key:record.token});
+    if(record.id)metadata.id=record.id;
+    function verify(file){
+      if(!file||file.trashed||file.name!==metadata.name||file.mimeType!==metadata.mimeType||JSON.stringify((file.parents||[]).slice().sort())!==JSON.stringify((metadata.parents||[]).slice().sort())||(file.appProperties||{}).minutes_create_key!==record.token)throw new Error('作成済みファイルの所属・用途が一致しません。二重作成せず停止します。');
+      return file;
+    }
+    function recover(){
+      if(record.id){try{return verify(get(record.id,{supportsAllDrives:true,fields:'id,name,mimeType,parents,appProperties,properties,driveId,trashed'}));}catch(e){if(status(e)===404||!status(e)&&/file not found|not found|見つかりません/i.test(String(e.message||'')))return null;throw e;}}
+      if(!metadata.parents||metadata.parents.length!==1)throw new Error('作成結果を確認する親フォルダがありません。');
+      var parent=get(metadata.parents[0],{supportsAllDrives:true,fields:'id,driveId'}),options={q:"'"+metadata.parents[0].replace(/'/g,"\\'")+"' in parents and trashed=false and appProperties has { key='minutes_create_key' and value='"+record.token+"' }",supportsAllDrives:true,includeItemsFromAllDrives:true,pageSize:100,fields:'nextPageToken,files(id,name,mimeType,parents,appProperties,properties,driveId,trashed)'};
+      if(parent.driveId){options.corpora='drive';options.driveId=parent.driveId;}else options.corpora='user';
+      var found=[],page;do{page=list(options);found=found.concat((page.files||[]).filter(function(f){return (f.appProperties||{}).minutes_create_key===record.token;}));options.pageToken=page.nextPageToken;}while(options.pageToken);
+      if(found.length>1)throw new Error('作成結果が重複しています。既存ファイルを確認してください。');return found.length?verify(found[0]):null;
+    }
+    for(var i=0;i<=waits.length;i++){
+      if(!first||i){var existing=recover();if(existing){props.deleteProperty(key);return existing;}}
+      // ID非対応の作成が曖昧に失敗した場合、一覧の反映を待つだけで再送しません。
+      if(first||record.id||record.rejected){
+        record.rejected=false;props.setProperty(key,JSON.stringify(record));
+        try{var result=Drive.Files.create(metadata,blob,args);if(!result||!result.id||record.id&&result.id!==record.id)throw new Error('Internal Error: Drive作成結果が不明です。');props.deleteProperty(key);return result;}
+        catch(e){var type=classify(e);if(type==='permanent'){if(status(e)===409&&record.id){var conflict=recover();if(conflict){props.deleteProperty(key);return conflict;}}if(i===0&&first&&[400,401,403,404,405,422].includes(status(e)))props.deleteProperty(key);throw e;}record.rejected=type==='rate'&&[403,429].includes(status(e));props.setProperty(key,JSON.stringify(record));}
+      }
+      first=false;if(i<waits.length)pause('Drive作成結果確認',i);
+    }
+    throw new Error('Drive作成結果を確認できません。二重作成を避けるため保留しました。GOOGLE_CREATE_PENDINGの記録を消さず、作成先を確認してください。');
+  }
+  return {classify:classify,call:call,get:get,list:list,update:update,create:create,docsGet:docsGet};
+})();
 
 
 // inboxPlan.js
@@ -2015,7 +2097,7 @@ var Stage2Drive_ = (function () {
     return c;
   }
   function escape(s) { return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
-  function meta(id) { return Drive.Files.get(id, { supportsAllDrives: true, fields: 'id,name,mimeType,parents,driveId,trashed,ownedByMe,appProperties,createdTime,modifiedTime,capabilities(canEdit,canAddChildren)' }); }
+  function meta(id) { return GoogleApi_.get(id, { supportsAllDrives: true, fields: 'id,name,mimeType,parents,driveId,trashed,ownedByMe,appProperties,createdTime,modifiedTime,capabilities(canEdit,canAddChildren)' }); }
   function list(parent, c, query) {
     var all = [], token;
     do {
@@ -2023,7 +2105,7 @@ var Stage2Drive_ = (function () {
       if (c.SHARED_DRIVE_ID) { args.corpora = 'drive'; args.driveId = c.SHARED_DRIVE_ID; }
       else args.corpora = 'user';
       if (token) args.pageToken = token;
-      var page = Drive.Files.list(args); all = all.concat(page.files || []); token = page.nextPageToken;
+      var page = GoogleApi_.list(args); all = all.concat(page.files || []); token = page.nextPageToken;
     } while (token);
     return all;
   }
@@ -2061,7 +2143,7 @@ var Stage2Drive_ = (function () {
       if (matches.length) return matches[0];
       if (!create) throw new Error('フォルダがありません: ' + name);
       write(); var app = { minutes_test_env: c.TEST_ENV_KEY }; if (meetingKey) app.meeting_key = meetingKey;
-      return Drive.Files.create({ name: name, mimeType: folderMime, parents: [parent], appProperties: app }, null, { supportsAllDrives: true, fields: 'id,name,mimeType,parents,appProperties' });
+      return GoogleApi_.create({ name: name, mimeType: folderMime, parents: [parent], appProperties: app }, null, { supportsAllDrives: true, fields: 'id,name,mimeType,parents,appProperties' });
     }
     function move(id, destination, kind, meetingKey) {
       write(); var m = within(id); within(destination);
@@ -2070,14 +2152,14 @@ var Stage2Drive_ = (function () {
       if (kind) app.kind = kind; if (meetingKey) app.meeting_key = meetingKey;
       var args = { supportsAllDrives: true, fields: 'id,name,parents' };
       if (!(m.parents || []).includes(destination)) { args.addParents = destination; args.removeParents = (m.parents || []).join(','); }
-      var result=Drive.Files.update({ appProperties: app }, id, null, args); delete metadata[id]; return result;
+      var result=GoogleApi_.update({ appProperties: app }, id, null, args); delete metadata[id]; return result;
     }
     function createFile(parent, name, content, mime, kind, meetingKey) {
       write(); within(parent);
       var app = { minutes_test_env: c.TEST_ENV_KEY, kind: kind }; if (meetingKey) app.meeting_key = meetingKey;
       var body = { name: name, mimeType: mime, parents: [parent], appProperties: app };
       var inputMime = mime === 'application/vnd.google-apps.document' ? 'text/html' : mime;
-      return Drive.Files.create(body, Utilities.newBlob(content, inputMime, name), { supportsAllDrives: true, fields: 'id,name,mimeType,parents,appProperties' });
+      return GoogleApi_.create(body, Utilities.newBlob(content, inputMime, name), { supportsAllDrives: true, fields: 'id,name,mimeType,parents,appProperties' });
     }
     function readJSON(id) {
       var m = within(id); if (m.mimeType !== 'application/json' && !m.name.endsWith('.json')) throw new Error('JSONファイルではありません。');
@@ -2110,7 +2192,7 @@ var Stage2Drive_ = (function () {
     function ensure(parent, name, kind) {
       var matches = list(parent, c, "mimeType='" + folderMime + "'").filter(function (f) { return (f.appProperties || {}).minutes_test_env === c.TEST_ENV_KEY && (f.appProperties || {}).kind === kind; });
       if (matches.length > 1) throw new Error('テスト準備の同一マーカーが複数あります。');
-      return matches[0] || Drive.Files.create({ name: name, mimeType: folderMime, parents: [parent], appProperties: { minutes_test_env: c.TEST_ENV_KEY, kind: kind } }, null, { supportsAllDrives: true, fields: 'id,name,parents' });
+      return matches[0] || GoogleApi_.create({ name: name, mimeType: folderMime, parents: [parent], appProperties: { minutes_test_env: c.TEST_ENV_KEY, kind: kind } }, null, { supportsAllDrives: true, fields: 'id,name,parents' });
     }
     var top = ensure('root', 'MTG議事録自動化（開発専用）', 'top'), system = ensure(top.id, '_system', 'system'), root = ensure(system.id, '_test', 'test_root');
     if (c.FOLDER_SYSTEM_TEST_ID && c.FOLDER_SYSTEM_TEST_ID !== root.id) throw new Error('既存のFOLDER_SYSTEM_TEST_IDは上書きしません。');
@@ -2121,7 +2203,7 @@ var Stage2Drive_ = (function () {
     else {
       var existing = drive.children(root.id).filter(function (f) { return f.mimeType === 'application/vnd.google-apps.spreadsheet' && f.name === 'MTG議事録 台帳（テスト）'; });
       if (existing.length > 1) throw new Error('テスト台帳が複数あります。');
-      var file = existing[0] || Drive.Files.create({ name: 'MTG議事録 台帳（テスト）', mimeType: 'application/vnd.google-apps.spreadsheet', parents: [root.id], appProperties: { minutes_test_env: c.TEST_ENV_KEY } }, null, { supportsAllDrives: true, fields: 'id' });
+      var file = existing[0] || GoogleApi_.create({ name: 'MTG議事録 台帳（テスト）', mimeType: 'application/vnd.google-apps.spreadsheet', parents: [root.id], appProperties: { minutes_test_env: c.TEST_ENV_KEY } }, null, { supportsAllDrives: true, fields: 'id' });
       c.LEDGER_SPREADSHEET_ID = file.id; properties.setProperty('LEDGER_SPREADSHEET_ID', file.id); book = SpreadsheetApp.openById(file.id);
     }
     var workspace = populate(c, drive, book);
@@ -2187,7 +2269,7 @@ var Stage2Drive_ = (function () {
     if (c.DRY_RUN === 'true') { console.log('準備予定：_testだけに目印を付け、不足フォルダ・台帳シート・サンプルマスタを追加します。設定やDriveには書き込みません。'); return { dryRun: true, root: root.id, ledger: ledgerFile.id }; }
     c.TEST_ENV_KEY = c.TEST_ENV_KEY || Utilities.getUuid();
     // ここからのDrive書き込み先は_test自身とその子だけです。
-    if (app.minutes_test_env !== c.TEST_ENV_KEY || app.kind !== 'test_root') Drive.Files.update({ appProperties: Object.assign({}, app, { minutes_test_env: c.TEST_ENV_KEY, kind: 'test_root' }) }, root.id, null, { supportsAllDrives: true, fields: 'id' });
+    if (app.minutes_test_env !== c.TEST_ENV_KEY || app.kind !== 'test_root') GoogleApi_.update({ appProperties: Object.assign({}, app, { minutes_test_env: c.TEST_ENV_KEY, kind: 'test_root' }) }, root.id, null, { supportsAllDrives: true, fields: 'id' });
     ['SHARED_DRIVE_ID', 'FOLDER_SYSTEM_TEST_ID', 'LEDGER_SPREADSHEET_ID', 'TEST_ENV_KEY'].forEach(function (k) { properties.setProperty(k, c[k]); });
     properties.setProperty('FOLDER_SYSTEM_ID', system.id); c.FOLDER_SYSTEM_ID = system.id;
     var drive = open(c), workspace = populate(c, drive, book);
@@ -2282,11 +2364,11 @@ function syncOrganizerRegistrations_(){
     var book=SpreadsheetApp.openById(c.LEDGER_SPREADSHEET_ID),ledger=Stage2Ledger_.open(book,true),current=ledger.rows('organizers');
     var folders=drive.children(drive.root.id).filter(function(f){return f.name==='_organizers';});
     if(folders.length!==1)throw new Error('GAS-Bで先に登録してください。_organizersフォルダを1つに特定できません。');
-    var folder=Drive.Files.get(folders[0].id,{supportsAllDrives:true,fields:'id,properties'});
+    var folder=GoogleApi_.get(folders[0].id,{supportsAllDrives:true,fields:'id,properties'});
     if(!folder.properties||folder.properties.minutes_role!=='organizers'||folder.properties.minutes_env!=='test')throw new Error('登録用フォルダの目印が不正です。');
     var seen=new Set(),plans=[];
     drive.children(folder.id).filter(function(f){return /^organizer_[a-f0-9]{64}\.json$/.test(f.name);}).forEach(function(f){
-      drive.within(f.id);var meta=Drive.Files.get(f.id,{supportsAllDrives:true,fields:'id,mimeType,size,properties,lastModifyingUser(emailAddress)'});
+      drive.within(f.id);var meta=GoogleApi_.get(f.id,{supportsAllDrives:true,fields:'id,mimeType,size,properties,lastModifyingUser(emailAddress)'});
       if(meta.mimeType!=='application/json'||Number(meta.size)>16384||!meta.properties||meta.properties.minutes_role!=='organizer_registration'||meta.properties.minutes_env!=='test')throw new Error('登録ファイルの用途・サイズが不正です。');
       var value=JSON.parse(DriveApp.getFileById(f.id).getBlob().getDataAsString('UTF-8')),email=String(value.email||'').toLowerCase();
       // 社員への拡大前のテストではfinance@だけを受け入れます。
@@ -2445,7 +2527,7 @@ var TranscriptText_=(function(){
       if(!source||!source.file_id||!['file','document_tab'].includes(source.type)||!Object.values(m.files||{}).includes(source.file_id))throw new Error('文字起こしの所在が不正です。');
       var native=drive.within(source.file_id);if(!(native.parents||[]).includes(folder.id))throw new Error('文字起こしが会議フォルダ内にありません。');
       var text;
-      if(native.mimeType==='application/vnd.google-apps.document')text=extract(Docs.Documents.get(native.id,{includeTabsContent:true}),source);
+      if(native.mimeType==='application/vnd.google-apps.document')text=extract(GoogleApi_.docsGet(native.id,{includeTabsContent:true}),source);
       else if(source.type==='file'&&native.mimeType==='text/plain')text=DriveApp.getFileById(native.id).getBlob().getDataAsString('UTF-8');
       else throw new Error('文字起こしのファイル型に対応していません。');
       if(!text.trim())throw new Error('文字起こしが空です。');
@@ -2457,10 +2539,10 @@ var TranscriptText_=(function(){
       var plan={meeting_key:m.meeting_key,sha256:digest,characters:text.length,action:existing?'既存TXTを再利用':'TXTを新規作成'};results.push(plan);console.log('文字起こし書き出し'+(c.DRY_RUN==='true'?'予定':'')+'：'+JSON.stringify(plan));
       if(c.DRY_RUN==='true')return;
       // 所属・manifestが読取時から変わっていないことを更新直前にも検査します。
-      var fresh=Drive.Files.get(folder.id,{supportsAllDrives:true,fields:'id,parents,trashed'}),mf=Drive.Files.get(manifests[0].id,{supportsAllDrives:true,fields:'id,parents,trashed'});
+      var fresh=GoogleApi_.get(folder.id,{supportsAllDrives:true,fields:'id,parents,trashed'}),mf=GoogleApi_.get(manifests[0].id,{supportsAllDrives:true,fields:'id,parents,trashed'});
       if(fresh.trashed||!fresh.parents||fresh.parents.length!==1||fresh.parents[0]!==raw.id||mf.trashed||!mf.parents||mf.parents.length!==1||mf.parents[0]!==folder.id||JSON.stringify(drive.readJSON(mf.id))!==JSON.stringify(m))throw new Error('書き出し直前に会議の所属・manifestが変わりました。');
       var saved=existing||drive.createFile(folder.id,'transcript.txt',text,'text/plain','transcript_text',m.meeting_key);
-      if(!m.transcript_text){m.transcript_text={file_id:saved.id,name:'transcript.txt',sha256:digest,characters:text.length,source:source,exported_at:new Date().toISOString()};Drive.Files.update({},mf.id,Utilities.newBlob(JSON.stringify(m,null,2),'application/json','manifest.json'),{supportsAllDrives:true,fields:'id'});}
+      if(!m.transcript_text){m.transcript_text={file_id:saved.id,name:'transcript.txt',sha256:digest,characters:text.length,source:source,exported_at:new Date().toISOString()};GoogleApi_.update({},mf.id,Utilities.newBlob(JSON.stringify(m,null,2),'application/json','manifest.json'),{supportsAllDrives:true,fields:'id'});}
     });return {dryRun:c.DRY_RUN==='true',results:results};
   }
   return {extract:extract,hash:hash,run:run};

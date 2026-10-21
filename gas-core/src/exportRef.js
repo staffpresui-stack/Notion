@@ -23,13 +23,13 @@ function exportRef_(){return Ledger_.withLock(function(){
   if(c.DRY_RUN==='true'){plans.forEach(function(p){console.log(p.name+'を'+(p.file?'同じIDで更新':'新規作成')+'する予定です。');});return {dryRun:true,counts:counts};}
   var ids={};
   plans.forEach(function(p){
-    var destination=Drive.Files.get(ref.id,{supportsAllDrives:true,fields:'id,name,parents,mimeType,driveId,trashed'});
+    var destination=GoogleApi_.get(ref.id,{supportsAllDrives:true,fields:'id,name,parents,mimeType,driveId,trashed'});
     if(destination.trashed||destination.name!=='ref'||destination.mimeType!=='application/vnd.google-apps.folder'||!destination.parents||destination.parents.length!==1||destination.parents[0]!==drive.root.id||c.SHARED_DRIVE_ID&&destination.driveId!==c.SHARED_DRIVE_ID)throw new Error('書き込み直前にrefフォルダの所属が変わりました。');
     var blob=Utilities.newBlob(JSON.stringify(p.data,null,2),'application/json',p.name),saved;
     // 実行直前も既存ファイルの所属を確認し、移動・名前変更はしません。
-    if(p.file){var f=Drive.Files.get(p.file.id,{supportsAllDrives:true,fields:'id,name,parents,mimeType,trashed,driveId'});
+    if(p.file){var f=GoogleApi_.get(p.file.id,{supportsAllDrives:true,fields:'id,name,parents,mimeType,trashed,driveId'});
       if(f.trashed||f.name!==p.name||!f.parents||f.parents.length!==1||f.parents[0]!==ref.id||c.SHARED_DRIVE_ID&&f.driveId!==c.SHARED_DRIVE_ID||!['application/json','text/plain','application/octet-stream'].includes(f.mimeType))throw new Error('更新直前に参照ファイルの状態が変わりました。');
-      saved=Drive.Files.update({},p.file.id,blob,{supportsAllDrives:true,fields:'id'});
+      saved=GoogleApi_.update({},p.file.id,blob,{supportsAllDrives:true,fields:'id'});
     }else{props.setProperty(p.pendingKey,at);saved=drive.createFile(ref.id,p.name,JSON.stringify(p.data,null,2),'application/json','reference');}
     if(!saved||!saved.id)throw new Error('参照ファイルの保存結果を確認できません。');
     props.deleteProperty(p.pendingKey);ids[p.name]=saved.id;console.log(p.name+'を書き出しました。ID：'+saved.id);

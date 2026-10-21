@@ -18,7 +18,7 @@ var OrganizerTranscript_=(function(){
     if(files.found.transcript)return {type:'file',file_id:files.found.transcript.id};
     if(!files.found.gemini)return null;
     var id=files.found.gemini.id,document;
-    try{document=Docs.Documents.get(id,{includeTabsContent:true,fields:'documentId,tabs(tabProperties(tabId,title),childTabs)'});}
+    try{document=GoogleApi_.docsGet(id,{includeTabsContent:true,fields:'documentId,tabs(tabProperties(tabId,title),childTabs)'});}
     catch(e){throw new Error('Geminiメモのタブを読み取れません。Docs API・読み取り権限を確認してください：'+String(e.message||'取得失敗').slice(0,220));}
     if(!document||document.documentId!==id)throw new Error('取得したGeminiメモのドキュメントIDが一致しません。');
     var tab=findTab(document);

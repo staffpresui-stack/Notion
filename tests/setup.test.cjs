@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 function load(files, globals = {}) {
   const ctx = vm.createContext({ console: { log() {} }, ...globals });
-  for (const file of files) vm.runInContext(fs.readFileSync('gas-core/src/' + file, 'utf8'), ctx);
+  for (const file of ['googleApi.generated.js',...files]) vm.runInContext(fs.readFileSync('gas-core/src/' + file, 'utf8'), ctx);
   return ctx;
 }
 const configured = { LEDGER_SPREADSHEET_ID: 'test-ledger', SHARED_DRIVE_ID: 'drive', NOTION_TOKEN: 'test-only',

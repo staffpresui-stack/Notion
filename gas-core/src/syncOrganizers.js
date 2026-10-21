@@ -10,11 +10,11 @@ function syncOrganizerRegistrations_(){
     var book=SpreadsheetApp.openById(c.LEDGER_SPREADSHEET_ID),ledger=Stage2Ledger_.open(book,true),current=ledger.rows('organizers');
     var folders=drive.children(drive.root.id).filter(function(f){return f.name==='_organizers';});
     if(folders.length!==1)throw new Error('GAS-Bで先に登録してください。_organizersフォルダを1つに特定できません。');
-    var folder=Drive.Files.get(folders[0].id,{supportsAllDrives:true,fields:'id,properties'});
+    var folder=GoogleApi_.get(folders[0].id,{supportsAllDrives:true,fields:'id,properties'});
     if(!folder.properties||folder.properties.minutes_role!=='organizers'||folder.properties.minutes_env!=='test')throw new Error('登録用フォルダの目印が不正です。');
     var seen=new Set(),plans=[];
     drive.children(folder.id).filter(function(f){return /^organizer_[a-f0-9]{64}\.json$/.test(f.name);}).forEach(function(f){
-      drive.within(f.id);var meta=Drive.Files.get(f.id,{supportsAllDrives:true,fields:'id,mimeType,size,properties,lastModifyingUser(emailAddress)'});
+      drive.within(f.id);var meta=GoogleApi_.get(f.id,{supportsAllDrives:true,fields:'id,mimeType,size,properties,lastModifyingUser(emailAddress)'});
       if(meta.mimeType!=='application/json'||Number(meta.size)>16384||!meta.properties||meta.properties.minutes_role!=='organizer_registration'||meta.properties.minutes_env!=='test')throw new Error('登録ファイルの用途・サイズが不正です。');
       var value=JSON.parse(DriveApp.getFileById(f.id).getBlob().getDataAsString('UTF-8')),email=String(value.email||'').toLowerCase();
       // 社員への拡大前のテストではfinance@だけを受け入れます。

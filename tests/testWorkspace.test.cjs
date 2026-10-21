@@ -23,7 +23,7 @@ function harness(dryRun = 'false', shared = false) {
   const ctx = vm.createContext({ console: { log() {} },
     PropertiesService: { getScriptProperties: () => ({ getProperties: () => ({ ...props }), getProperty: k => props[k], setProperty(k, v) { writes.push('property'); props[k] = v; }, deleteProperty(k) { writes.push('property-delete'); delete props[k]; } }) },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
-    Utilities: { getUuid: () => 'test-env-uuid', newBlob: (content, mime, name) => ({ content, mime, name }), formatDate: (d, zone, format) => format === 'yyMMdd' ? '261021' : '2026-10-21', DigestAlgorithm: { SHA_256: 'sha256' }, Charset: { UTF_8: 'utf8' }, computeDigest: (a, value) => [...crypto.createHash('sha256').update(value).digest()] },
+    Utilities: { getUuid: () => 'test-env-uuid', newBlob: (content, mime, name) => ({ content, mime, name, getDataAsString:()=>content }), formatDate: (d, zone, format) => format === 'yyMMdd' ? '261021' : '2026-10-21', DigestAlgorithm: { SHA_256: 'sha256' }, Charset: { UTF_8: 'utf8' }, computeDigest: (a, value) => [...crypto.createHash('sha256').update(value).digest()] },
     SpreadsheetApp: { openById: id => { assert.ok(books[id]); return books[id]; } },
     Drive: { Files: {
       get(id, options) { calls.push({ method: 'get', id, options }); assert.equal(options.supportsAllDrives, true); assert.ok(files[id]); return clone(files[id]); },
@@ -79,7 +79,7 @@ function harness(dryRun = 'false', shared = false) {
     for (const name of ['事業部全体', 'セールス・マーケ', 'EC', '生産管理', '経理・バックオフィス', 'Salesforce・AI', '経営']) add('existing-' + name, name, 'existing-社内');
     props.FOLDER_INBOX_RAW_TEST_ID = 'existing-00_受信';
   }
-  for (const file of ['ledger.js', 'stage2Ledger.js', 'stage2Drive.js', 'notionFixtures.generated.js', 'stage2Content.js']) vm.runInContext(fs.readFileSync('gas-core/src/' + file, 'utf8'), ctx);
+  for (const file of ['googleApi.generated.js', 'ledger.js', 'stage2Ledger.js', 'stage2Drive.js', 'notionFixtures.generated.js', 'stage2Content.js']) vm.runInContext(fs.readFileSync('gas-core/src/' + file, 'utf8'), ctx);
   return { ctx, props, files, books, writes, calls };
 }
 test('マイドライブ準備は専用ルート・10シート・サンプルマスタを作り、再実行で増やしません', () => {
@@ -217,4 +217,9 @@ test('Notion取得後にrefが_test外へ移動しても、実更新直前に検
  const h=referenceHarness();h.ctx.exportRef();h.writes.length=0;const open=h.ctx.NotionTestEnvironment_.open;
  h.ctx.NotionTestEnvironment_.open=(...args)=>({...open(...args),referenceProjects:()=>{h.files['existing-ref'].parents=['shared-system'];return clone(h.projects)}});
  assert.throws(()=>h.ctx.exportRef(),/refフォルダの所属/);assert.equal(h.writes.length,0);
+});
+test('共有ドライブの最初のmetaがInternal Errorでも再試行し、DRY_RUNは書き込まない',()=>{
+ const h=harness('false',true);h.ctx.setupSharedTestWorkspace();h.props.DRY_RUN='true';const before=h.writes.length,original=h.ctx.Drive.Files.get,sleeps=[];let count=0;h.ctx.Utilities.sleep=n=>sleeps.push(n);
+ h.ctx.Drive.Files.get=(id,args)=>{if(id===h.props.FOLDER_SYSTEM_TEST_ID&&count++<2)throw new Error('drive.files.get の呼び出しに失敗しました: Internal Error');return original(id,args);};
+ const drive=h.ctx.Stage2Drive_.open(h.ctx.Stage2Drive_.config());assert.equal(drive.root.id,h.props.FOLDER_SYSTEM_TEST_ID);assert.deepEqual(sleeps,[500,1000]);assert.equal(h.writes.length,before);
 });

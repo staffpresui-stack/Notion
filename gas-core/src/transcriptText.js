@@ -39,7 +39,7 @@ var TranscriptText_=(function(){
       if(!source||!source.file_id||!['file','document_tab'].includes(source.type)||!Object.values(m.files||{}).includes(source.file_id))throw new Error('文字起こしの所在が不正です。');
       var native=drive.within(source.file_id);if(!(native.parents||[]).includes(folder.id))throw new Error('文字起こしが会議フォルダ内にありません。');
       var text;
-      if(native.mimeType==='application/vnd.google-apps.document')text=extract(Docs.Documents.get(native.id,{includeTabsContent:true}),source);
+      if(native.mimeType==='application/vnd.google-apps.document')text=extract(GoogleApi_.docsGet(native.id,{includeTabsContent:true}),source);
       else if(source.type==='file'&&native.mimeType==='text/plain')text=DriveApp.getFileById(native.id).getBlob().getDataAsString('UTF-8');
       else throw new Error('文字起こしのファイル型に対応していません。');
       if(!text.trim())throw new Error('文字起こしが空です。');
@@ -51,10 +51,10 @@ var TranscriptText_=(function(){
       var plan={meeting_key:m.meeting_key,sha256:digest,characters:text.length,action:existing?'既存TXTを再利用':'TXTを新規作成'};results.push(plan);console.log('文字起こし書き出し'+(c.DRY_RUN==='true'?'予定':'')+'：'+JSON.stringify(plan));
       if(c.DRY_RUN==='true')return;
       // 所属・manifestが読取時から変わっていないことを更新直前にも検査します。
-      var fresh=Drive.Files.get(folder.id,{supportsAllDrives:true,fields:'id,parents,trashed'}),mf=Drive.Files.get(manifests[0].id,{supportsAllDrives:true,fields:'id,parents,trashed'});
+      var fresh=GoogleApi_.get(folder.id,{supportsAllDrives:true,fields:'id,parents,trashed'}),mf=GoogleApi_.get(manifests[0].id,{supportsAllDrives:true,fields:'id,parents,trashed'});
       if(fresh.trashed||!fresh.parents||fresh.parents.length!==1||fresh.parents[0]!==raw.id||mf.trashed||!mf.parents||mf.parents.length!==1||mf.parents[0]!==folder.id||JSON.stringify(drive.readJSON(mf.id))!==JSON.stringify(m))throw new Error('書き出し直前に会議の所属・manifestが変わりました。');
       var saved=existing||drive.createFile(folder.id,'transcript.txt',text,'text/plain','transcript_text',m.meeting_key);
-      if(!m.transcript_text){m.transcript_text={file_id:saved.id,name:'transcript.txt',sha256:digest,characters:text.length,source:source,exported_at:new Date().toISOString()};Drive.Files.update({},mf.id,Utilities.newBlob(JSON.stringify(m,null,2),'application/json','manifest.json'),{supportsAllDrives:true,fields:'id'});}
+      if(!m.transcript_text){m.transcript_text={file_id:saved.id,name:'transcript.txt',sha256:digest,characters:text.length,source:source,exported_at:new Date().toISOString()};GoogleApi_.update({},mf.id,Utilities.newBlob(JSON.stringify(m,null,2),'application/json','manifest.json'),{supportsAllDrives:true,fields:'id'});}
     });return {dryRun:c.DRY_RUN==='true',results:results};
   }
   return {extract:extract,hash:hash,run:run};
