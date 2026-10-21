@@ -1,4 +1,5 @@
 function ingestFixturesToNotionTest() {
+  if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_();
   var env = NotionTestEnvironment_.open(true), lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) throw new Error('別のサンプル取り込みが実行中です。');
   try {

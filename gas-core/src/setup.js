@@ -1,4 +1,5 @@
 function dumpNotionSchemas() {
+  if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_();
   var c = Config_.assertSafe('notion');
   var keys = ['NOTION_DB_MINUTES_TEST', 'NOTION_DB_TASKS_TEST', 'NOTION_DB_TLDV_INBOX'];
   if (c.TASK_DB_MODE === 'dual') keys.push('NOTION_DB_NONPROJECT_TEST');
@@ -24,6 +25,7 @@ function dumpNotionSchemas() {
 }
 
 function initLedger() {
+  if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_();
   var c = Config_.assertSafe();
   DriveUtil_.verifyTestRoot(c);
   return Ledger_.withLock(function () {
@@ -37,6 +39,7 @@ function initLedger() {
 }
 
 function registerFolders() {
+  if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_();
   var c = Config_.assertSafe();
   var root = DriveUtil_.verifyTestRoot(c);
   var internal = DriveUtil_.exact(root.id, '社内', c.SHARED_DRIVE_ID);

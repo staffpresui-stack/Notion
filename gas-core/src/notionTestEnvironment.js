@@ -19,8 +19,10 @@ var NotionTestEnvironment_ = (function () {
         var create = method === 'post' && path === 'pages' && verified.minutes && verified.tasks && body.parent && body.parent.type === 'data_source_id' && normalize(body.parent.data_source_id) === normalize(verified.minutes.sourceId);
         var append = /^blocks\/([^/]+)\/children$/.exec(path);
         var appendAllowed = method === 'patch' && append && allowedPages.has(normalize(append[1])) && body.children && body.children.length <= 100;
+        var reviewAllowed = purpose === 'review' && method === 'patch' && /^pages\/[^/]+$/.test(path) && allowedPages.has(normalize(path.split('/')[1])) && Object.keys(body).every(function (k) { return k === 'properties' || k === 'archived'; }) && (!body.properties || Object.keys(body.properties).every(function (k) { return ['議事録名', '事業部領域', '関連するプロジェクト'].includes(k); }));
+        var query = method === 'post' && verified.tasks && path === 'data_sources/' + verified.tasks.sourceId + '/query';
         var optionAllowed = purpose === 'inbox-options' && inboxPatch && method === 'patch' && path === inboxPatch.path && JSON.stringify(body) === inboxPatch.body;
-        if (!writingWorkflow || dryRun !== 'false' || !(create || appendAllowed || optionAllowed)) throw new Error('確認済みテスト対象以外への書き込みは禁止です。');
+        if (!query && (!writingWorkflow || dryRun !== 'false' || !(create || appendAllowed || optionAllowed || reviewAllowed))) throw new Error('確認済みテスト対象以外への書き込みは禁止です。');
       }
       var options = { method: method, headers: { Authorization: 'Bearer ' + token, 'Notion-Version': '2025-09-03' }, muteHttpExceptions: true };
       if (body) { options.contentType = 'application/json'; options.payload = JSON.stringify(body); }
@@ -68,10 +70,27 @@ var NotionTestEnvironment_ = (function () {
       return page.parent.type === 'data_source_id' && normalize(page.parent.data_source_id) === normalize(verified.tasks.sourceId) ||
         page.parent.type === 'database_id' && normalize(page.parent.database_id) === normalize(ids.tasks) ? page.id : null;
     }
-    function verifyMinutesPage(id) {
+    function verifyMinutesPage(id, allowArchived) {
       var page = request('get', 'pages/' + encodeURIComponent(id));
-      if (!verified.minutes || page.archived || page.in_trash || !page.parent || !(page.parent.type === 'data_source_id' && normalize(page.parent.data_source_id) === normalize(verified.minutes.sourceId) || page.parent.type === 'database_id' && normalize(page.parent.database_id) === normalize(ids.minutes))) throw new Error('記録済みページがテスト議事録DBに属していません。');
+      if (!verified.minutes || ((page.archived || page.in_trash) && !(purpose === 'review' && allowArchived)) || !page.parent || !(page.parent.type === 'data_source_id' && normalize(page.parent.data_source_id) === normalize(verified.minutes.sourceId) || page.parent.type === 'database_id' && normalize(page.parent.database_id) === normalize(ids.minutes))) throw new Error('記録済みページがテスト議事録DBに属していません。');
       allowedPages.add(normalize(page.id)); return page;
+    }
+    function updateReviewPage(id, props, archive) {
+      if (purpose !== 'review') throw new Error('確認画面専用です。');
+      verifyMinutesPage(id, archive);
+      return request('patch', 'pages/' + id, archive ? { archived: true } : { properties: props });
+    }
+    function projects() {
+      if (!verified.tasks) throw new Error('テストDBを確認してください。');
+      var out = [], cursor;
+      do {
+        var body = { page_size: 100 }; if (cursor) body.start_cursor = cursor;
+        var data = request('post', 'data_sources/' + verified.tasks.sourceId + '/query', body);
+        (data.results || []).forEach(function (p) { if (p.archived || p.in_trash) return; var title = Object.values(p.properties || {}).find(function (v) { return v.type === 'title'; }); out.push({ id: p.id, domains: ((p.properties['事業部領域'] || {}).multi_select || []).map(function (v) { return v.name; }), title: title ? title.title.map(function (t) { return t.plain_text || t.text && t.text.content || ''; }).join('') : p.id }); });
+        cursor = data.has_more ? data.next_cursor : null;
+        if (out.length >= 500 && cursor) throw new Error('プロジェクト候補が500件を超えました。refを整備してください。');
+      } while (cursor);
+      return out;
     }
     function createPage(payload) { var page = request('post', 'pages', payload); if (page.id) allowedPages.add(normalize(page.id)); return page; }
     function appendBlocks(id, children) { return request('patch', 'blocks/' + id + '/children', { children: children }); }
@@ -92,12 +111,14 @@ var NotionTestEnvironment_ = (function () {
     }
     return { properties: properties, dryRun: dryRun === 'true', schema: schema, inbox: discoverInbox, project: project, createPage: createPage,
       verifyMinutesPage: verifyMinutesPage, appendBlocks: appendBlocks, addInboxOptions: addInboxOptions,
+      updateReviewPage: updateReviewPage, projects: projects,
       ids: { minutes: ids.minutes, tasks: ids.tasks } };
   }
   return { open: open, normalize: normalize };
 })();
 
 function checkTestEnvironment() {
+  if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_();
   var env = NotionTestEnvironment_.open(false), report = { databases: [], differences: [], inboxId: null };
   function inspect(key, schema) {
     var comparison = NotionFixturePlan_.compareSchema(key, schema.properties, env.properties.getProperty('NOTION_REQUESTER_TYPE') || 'people');
@@ -119,4 +140,5 @@ function checkTestEnvironment() {
   return report;
 }
 
-function addTldvInboxStatusOptions() { return Ledger_.withLock(function () { return NotionTestEnvironment_.open(true, 'inbox-options').addInboxOptions(); }); }
+function addTldvInboxStatusOptions() {
+  if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_(); return Ledger_.withLock(function () { return NotionTestEnvironment_.open(true, 'inbox-options').addInboxOptions(); }); }

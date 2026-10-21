@@ -197,3 +197,16 @@ test('検証済みDBでも親ページが違えば、書き込み前に停止し
   assert.throws(() => h.ctx.ingestFixturesToNotionTest(), /管理用ページ/);
   assert.equal(h.pages.length, 0);
 });
+
+test('確認画面専用PATCHは検証済みテストページだけ、DRY_RUN時は拒否', () => {
+  // 実クライアントの検証は専用の最小HTTP環境で行います。
+  const props = { ENV:'test', DRY_RUN:'false', NOTION_TOKEN:'fake-token-for-tests', NOTION_DB_MINUTES_TEST:minutesId, NOTION_DB_TASKS_TEST:tasksId };
+  const calls=[];
+  const ctx=vm.createContext({Utilities:{sleep(){}},PropertiesService:{getScriptProperties:()=>({getProperty:k=>props[k]})},UrlFetchApp:{fetch(url,o){const path=url.split('/v1/')[1];calls.push({path,method:o.method,body:o.payload&&JSON.parse(o.payload)});let data;if(path.startsWith('databases/')){const id=path.split('/')[1];data={id,parent:{type:'page_id',page_id:parent},data_sources:[{id:id+'-source'}]}}else if(path.startsWith('data_sources/')&&o.method==='get'){const id=path.split('/')[1];data={id,parent:{database_id:id.replace(/-source$/,'')},properties:{}}}else if(path.endsWith('/query'))data={results:[],has_more:false};else data={id:'test-page',archived:props.archived===true,parent:{type:'data_source_id',data_source_id:props.badParent?'production-source':minutesId+'-source'}};return {getResponseCode:()=>200,getContentText:()=>JSON.stringify(data)}}}});
+  vm.runInContext(fs.readFileSync('gas-core/src/notionTestEnvironment.js','utf8'),ctx);
+  function open(){const e=ctx.NotionTestEnvironment_.open(true,'review');e.schema(minutesId,'minutes');e.schema(tasksId,'tasks');return e}
+  let e=open();e.updateReviewPage('test-page',{'議事録名':{title:[]}},false);assert.equal(calls.at(-1).method,'patch');
+  props.archived=true;e.updateReviewPage('test-page',null,true);assert.equal(calls.at(-1).body.archived,true);
+  props.badParent=true;assert.throws(()=>e.updateReviewPage('test-page',null,true),/テスト議事録DB/);
+  props.badParent=false;props.archived=false;props.DRY_RUN='true';e=open();assert.deepEqual(clone(e.projects()),[]);const n=calls.filter(c=>c.method==='patch').length;assert.throws(()=>e.updateReviewPage('test-page',{},false),/書き込みは禁止/);assert.equal(calls.filter(c=>c.method==='patch').length,n);
+});

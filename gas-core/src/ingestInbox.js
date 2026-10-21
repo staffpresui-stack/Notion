@@ -1,7 +1,7 @@
 var InboxIngest_ = (function () {
   function hash(value) { return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, JSON.stringify(value), Utilities.Charset.UTF_8).map(function (b) { return ('0' + ((b + 256) % 256).toString(16)).slice(-2); }).join(''); }
   function state(row) { return row && row.step_done_json ? JSON.parse(row.step_done_json) : {}; }
-  function run() {
+  function run(onlyMeetingKey) {
     var c = Stage2Drive_.config(), drive = Stage2Drive_.open(c);
     drive.within(c.LEDGER_SPREADSHEET_ID);
     if (c.CHATWORK_TOKEN && (!/^\d+$/.test(c.CHATWORK_ROOM_ID_TEST || '') || c.CHATWORK_ROOM_ID_TEST === c.CHATWORK_ROOM_ID)) throw new Error('Chatworkのテスト専用ルームIDが必要です。');
@@ -11,6 +11,7 @@ var InboxIngest_ = (function () {
     var rows = ledger.rows('minutes'), files = drive.children(inbox.id).filter(function (f) { return f.name.endsWith('.json'); });
     rows.forEach(function (r) { var s = state(r); if (s.jsonId && !s.finished && !s.error && !files.some(function (f) { return f.id === s.jsonId; })) files.push(drive.within(s.jsonId)); });
     files = files.filter(function (f) { return !rows.some(function (r) { var s = state(r); return s.jsonId === f.id && s.error && s.modifiedTime === f.modifiedTime; }); });
+    if (onlyMeetingKey) { var target = rows.find(function (r) { return r.meeting_key === onlyMeetingKey; }); var targetId = state(target).jsonId; files = files.filter(function (f) { return f.id === targetId; }); }
     files.sort(function (a, b) { return String(a.createdTime || '').localeCompare(String(b.createdTime || '')) || a.id.localeCompare(b.id); });
     var results = [], started = Date.now();
     files.slice(0, c.INGEST_BATCH).forEach(function (file) {
@@ -165,9 +166,11 @@ var InboxIngest_ = (function () {
   return { run: run };
 })();
 
-function ingestInbox() { return Ledger_.withLock(InboxIngest_.run); }
+function ingestInbox() {
+  if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_(); return Ledger_.withLock(InboxIngest_.run); }
 
 function retryInboxErrors() {
+  if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_();
   return Ledger_.withLock(function () {
     var c = Stage2Drive_.config(), drive = Stage2Drive_.open(c); drive.within(c.LEDGER_SPREADSHEET_ID);
     var ledger = Stage2Ledger_.open(SpreadsheetApp.openById(c.LEDGER_SPREADSHEET_ID));

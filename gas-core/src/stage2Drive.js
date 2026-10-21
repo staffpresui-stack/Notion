@@ -189,8 +189,10 @@ var Stage2Drive_ = (function () {
   return { config: config, open: open, setup: setup, setupShared: setupShared };
 })();
 
-function setupTestWorkspace() { return Ledger_.withLock(Stage2Drive_.setup); }
+function setupTestWorkspace() {
+  if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_(); return Ledger_.withLock(Stage2Drive_.setup); }
 
 function setupSharedTestWorkspace(sharedDriveId, testRootId, testLedgerId) {
+  if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_();
   return Ledger_.withLock(function () { return Stage2Drive_.setupShared(sharedDriveId, testRootId, testLedgerId); });
 }

@@ -8,6 +8,10 @@ for (const root of ['gas-core', 'gas-organizer']) {
     if (file.endsWith('.js')) new vm.Script(fs.readFileSync(path.join(root, 'src', file), 'utf8'), { filename: file });
   }
 }
+for (const file of fs.readdirSync('gas-core/src/ui').filter(f => f.endsWith('.html'))) {
+  const html = fs.readFileSync(path.join('gas-core/src/ui',file),'utf8');
+  for (const match of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) new vm.Script(match[1],{filename:file});
+}
 const Ajv = require('ajv/dist/2020');
 const validate = new Ajv({ strict: true }).compile(JSON.parse(fs.readFileSync('schemas/inbox_judgement.schema.json')));
 for (const file of fs.readdirSync('fixtures').filter(f => f.startsWith('judgement_'))) {

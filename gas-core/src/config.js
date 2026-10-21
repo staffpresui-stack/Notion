@@ -43,12 +43,14 @@ var Config_ = (function () {
 })();
 
 function checkConfig() {
+  if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_();
   var result = Config_.inspect(Config_.load());
   console.log(JSON.stringify(result));
   return result;
 }
 
 function checkNotionConfig() {
+  if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_();
   var result = Config_.inspect(Config_.load(), 'notion');
   console.log(JSON.stringify(result));
   return result;

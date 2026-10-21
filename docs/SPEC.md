@@ -262,7 +262,7 @@ Notion：MTG議事録「{議事録名}」（{作成済み|作成待ち}）
 
 ## 12. 確認・編集画面（GAS-A Web アプリ）
 
-- `executeAs: USER_DEPLOYING`（finance@）、`access: DOMAIN`。操作者は `Session.getActiveUser().getEmail()` で取得し、取れない場合は操作を拒否する（要確認：ドメイン内で取得できるか）。
+- 初回テストは `executeAs: USER_DEPLOYING`（finance@）、`access: MYSELF`（finance@だけ）。社員メール対応の回収・マスタ設定後に `access: DOMAIN` へ変更します。操作者は `Session.getActiveUser().getEmail()` で取得し、取れない場合は操作を拒否する（要確認：ドメイン内で取得できるか）。
 - 利用者への案内 URL は `https://script.google.com/a/macros/premiere-mode.co.jp/s/{ID}/exec`（複数アカウント同時ログインの問題を避ける）。
 - 見せる範囲：画面は finance@ の権限で動くので、Drive の権限が効かない。`masters_folders.rank` と `masters_people` で見せる範囲をアプリ内で制御する（ランク設計は要決定。決まるまでは管理者と確認者だけが開ける）。
 
@@ -272,6 +272,8 @@ Notion：MTG議事録「{議事録名}」（{作成済み|作成待ち}）
 - 詳細（編集）：社内／社外、Drive の格納先（部署 or 顧客を検索。新規顧客は顧客名とドメイン必須）、事業部領域（6択から複数）、関連するプロジェクト（`ref/projects.json` から検索・複数）、議事録名。自動の値と現在の値の差を色で示す。社外参加者がいるのに社内を選ぶと警告。
 - ボタン：このまま確定／修正して確定／保留／対象外／再実行（要対応のときだけ）。
 - 確定時の処理順：フォルダ移動 → Notion 更新 → Chatwork 書き換え → change_log。失敗した段階で止めて `status=要対応`、`step_done_json` に完了済みの段階を残す。
+
+段階3のテスト手順は `REVIEW_TEST.md`。`REVIEW_MASTER_ACCESS=false` を既定とし、finance@もmasters_peopleの役割を照合します。trueへの切替でマスタ登録社員を許可します。一般確認者は担当行、事業部領域、settingsの `review_rank_allow:主メール` に指定されたランクだけを閲覧・操作できます。新規顧客は管理者が名前とドメインを指定して登録します。対象外の会議フォルダは `_test/99_対象外/` へ移し、`_空` は空の受信フォルダ専用です。対象外の復帰は手動確認とし、画面からは行いません。
 
 ### タブ2：タスク提案と変更ログ（段階5）
 - 提案ごとに 承認／却下／保留／内容修正。変更前→変更後を並べる。新規・更新、プロジェクト／非プロジェクトの区分、依頼者・担当者を表示。

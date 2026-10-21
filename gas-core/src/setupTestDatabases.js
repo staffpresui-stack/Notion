@@ -125,4 +125,5 @@ var TestDbSetup_ = (function () {
   return { run: run };
 })();
 
-function setupTestDatabases() { return TestDbSetup_.run(); }
+function setupTestDatabases() {
+  if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_(); return TestDbSetup_.run(); }

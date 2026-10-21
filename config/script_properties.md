@@ -47,3 +47,11 @@ GAS エディタ「プロジェクトの設定」＞「スクリプト プロパ
 | MOVER_INTERVAL_MIN | `15` | |
 | MOVER_WAIT_MIN | `20` | 会議終了から移動を始めるまでの時間 |
 | CORE_WEBAPP_URL | | 登録情報を GAS-A に送る場合の送り先（要確認） |
+
+## 段階3の確認画面
+
+- REVIEW_MASTER_ACCESS：既定false。finance@だけ。trueにするとmasters_peopleの登録・役割・担当・領域・ランクを照合して社員を許可します。初回デプロイはMYSELFです。
+- REVIEW_TEST_FAIL_STEP：テスト用の一度だけの停止位置。通常は削除。after_drive／after_notion／after_chatwork。ENV=testかつfinance@の操作時だけ有効です。
+- WEBAPP_URL：finance@でデプロイした /exec URL。Chatwork予定本文の確認リンクに使います。
+
+マスタ・HTMLファイル・デプロイ・試験順は docs/REVIEW_TEST.md を参照してください。

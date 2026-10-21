@@ -54,6 +54,7 @@ var Stage2Content_ = (function () {
 })();
 
 function seedFixtureInbox() {
+  if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_();
   return Ledger_.withLock(function () {
     var c = Stage2Drive_.config(), drive = Stage2Drive_.open(c);
     drive.within(c.LEDGER_SPREADSHEET_ID);
