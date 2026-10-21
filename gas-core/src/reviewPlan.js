@@ -38,7 +38,28 @@ var ReviewPlan_ = (function () {
       next.status = changed || row.status === '確定・修正あり' ? '確定・修正あり' : '確定'; next.confirmed_by = user.email; next.confirmed_at = now;
     } else next.status = request.action === 'hold' ? '保留' : '対象外';
     return { action: request.action, before: snapshot(row), desired: next, newClient: newClient, changed: changed,
-      reconfirmed: confirm && ['確定', '確定・修正あり'].includes(row.status) && changed, archive: request.action === 'exclude', updateProperties: confirm };
+      reconfirmed: confirm && ['確定', '確定・修正あり'].includes(row.status) && changed, exclude: request.action === 'exclude', updateProperties: confirm };
+  }
+  var states = ['確認待ち','仕分け待ち','確定','確定・修正あり','保留','対象外','対象外（Meet優先）','要対応'];
+  function statusSchema(property) {
+    if (property && property.type!=='select') throw new Error('確認状態はselect型にしてください。既存項目は変更しません。');
+    var options=property ? property.select.options || [] : [], added=states.filter(function(name){return !options.some(function(o){return o.name===name;});});
+    return {changed:!property || added.length>0, added:added, options:options.concat(added.map(function(name){return {name:name};}))};
+  }
+  function statusProperties(status,schema) {
+    var p=schema.properties['確認状態'];
+    if (!states.includes(status) || !p || p.type!=='select' || !(p.select.options || []).some(function(o){return o.name===status;})) throw new Error('確認状態が未準備です。setupReviewNotionStatusを実行してください。');
+    return {'確認状態':{select:{name:status}}};
+  }
+  function migrateJournal(journal) {
+    if (!journal) return journal;
+    var p=journal.plan;
+    if (Object.prototype.hasOwnProperty.call(p,'archive')) {
+      p.exclude=!!p.archive; delete p.archive;
+      // 旧版でゴミ箱処理を完了した記録でも、再開時は状態を改めて反映します。
+      if (journal.state!=='done') journal.notion=false;
+    }
+    return journal;
   }
   function notionProperties(row, schema, projectIds) {
     var p = schema.properties, selected = arrays(row.domains_final), ids = arrays(row.related_project_ids_final);
@@ -46,7 +67,7 @@ var ReviewPlan_ = (function () {
     var options = (p['事業部領域'].multi_select.options || []).map(function (o) { return o.name; });
     if (selected.some(function (name) { return !domains.includes(name) || !options.includes(name); })) throw new Error('Notionに存在しない事業部領域は送信できません。');
     if (ids.some(function (id) { return !projectIds.includes(id); })) throw new Error('テスト用タスクDBに存在しない関連プロジェクトです。');
-    return { '議事録名': { title: [{ type: 'text', text: { content: row.minutes_title } }] }, '事業部領域': { multi_select: selected.map(function (name) { return { name: name }; }) }, '関連するプロジェクト': { relation: ids.map(function (id) { return { id: id }; }) } };
+    return Object.assign(statusProperties(row.status,schema), { '議事録名': { title: [{ type: 'text', text: { content: row.minutes_title } }] }, '事業部領域': { multi_select: selected.map(function (name) { return { name: name }; }) }, '関連するプロジェクト': { relation: ids.map(function (id) { return { id: id }; }) } });
   }
   function reply(plan) {
     return '確定後の修正内容\n' + ['scope_final', 'placement_final', 'domains_final', 'related_project_ids_final', 'minutes_title'].filter(function (k) { return plan.before[k] !== plan.desired[k]; }).map(function (k) {
@@ -54,5 +75,5 @@ var ReviewPlan_ = (function () {
       return names[k] + '：' + String(plan.before[k] || '未設定') + ' → ' + String(plan.desired[k] || '未設定');
     }).join('\n');
   }
-  return { plan: plan, snapshot: snapshot, notionProperties: notionProperties, reply: reply };
+  return { statusSchema:statusSchema,statusProperties:statusProperties,migrateJournal:migrateJournal,plan: plan, snapshot: snapshot, notionProperties: notionProperties, reply: reply };
 })();

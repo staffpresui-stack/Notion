@@ -22,24 +22,26 @@ var Stage2Drive_ = (function () {
   }
   function open(c) {
     if (c.ENV !== 'test' || !c.TEST_ENV_KEY || !c.FOLDER_SYSTEM_TEST_ID) throw new Error('共有ドライブはsetupSharedTestWorkspace、マイドライブはsetupTestWorkspaceで準備してください。');
-    var root = meta(c.FOLDER_SYSTEM_TEST_ID);
+    var metadata = {};
+    function readMeta(id) { return metadata[id] || (metadata[id] = meta(id)); }
+    var root = readMeta(c.FOLDER_SYSTEM_TEST_ID);
     function marker(m, kind) { return m.appProperties && m.appProperties.minutes_test_env === c.TEST_ENV_KEY && (!kind || m.appProperties.kind === kind); }
     if (root.trashed || root.mimeType !== folderMime || root.name !== '_test' || !marker(root, 'test_root')) throw new Error('初期化済みテストルートではありません。');
     if (c.SHARED_DRIVE_ID ? root.driveId !== c.SHARED_DRIVE_ID : root.driveId || !root.ownedByMe) throw new Error('テストDriveの所属が違います。');
-    var system = root.parents && root.parents.length === 1 && meta(root.parents[0]);
+    var system = root.parents && root.parents.length === 1 && readMeta(root.parents[0]);
     if (!system || system.name !== '_system' || system.trashed || system.mimeType && system.mimeType !== folderMime) throw new Error('_system/_testではありません。');
     if (c.SHARED_DRIVE_ID) {
       // _systemは本番領域でもあるため目印を要求・追加せず、所属だけを検証します。
       if (system.driveId !== c.SHARED_DRIVE_ID || !system.parents || system.parents.length !== 1 || system.parents[0] !== c.SHARED_DRIVE_ID || c.FOLDER_SYSTEM_ID && system.id !== c.FOLDER_SYSTEM_ID) throw new Error('_systemが指定共有ドライブ直下にありません。');
     } else if (!marker(system, 'system')) throw new Error('マイドライブの_systemマーカーが不正です。');
     function within(id) {
-      var file = meta(id), cursor = file, visited = new Set();
+      var file = readMeta(id), cursor = file, visited = new Set();
       for (var depth = 0; depth < 30; depth++) {
         if (cursor.trashed || cursor.mimeType === 'application/vnd.google-apps.shortcut') throw new Error('削除済みファイル・ショートカットは処理できません。');
         if (c.SHARED_DRIVE_ID && cursor.driveId !== c.SHARED_DRIVE_ID) throw new Error('指定共有ドライブ外のファイルです。');
         if (cursor.id === root.id) return file;
         if (!cursor.parents || cursor.parents.length !== 1 || visited.has(cursor.id)) break;
-        visited.add(cursor.id); cursor = cursor.parents[0] === root.id ? root : meta(cursor.parents[0]);
+        visited.add(cursor.id); cursor = cursor.parents[0] === root.id ? root : readMeta(cursor.parents[0]);
       }
       throw new Error('テストルート外のファイル操作は禁止です。');
     }
@@ -61,7 +63,7 @@ var Stage2Drive_ = (function () {
       if (kind) app.kind = kind; if (meetingKey) app.meeting_key = meetingKey;
       var args = { supportsAllDrives: true, fields: 'id,name,parents' };
       if (!(m.parents || []).includes(destination)) { args.addParents = destination; args.removeParents = (m.parents || []).join(','); }
-      return Drive.Files.update({ appProperties: app }, id, null, args);
+      var result=Drive.Files.update({ appProperties: app }, id, null, args); delete metadata[id]; return result;
     }
     function createFile(parent, name, content, mime, kind, meetingKey) {
       write(); within(parent);

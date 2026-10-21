@@ -3,9 +3,9 @@ var Review_ = (function () {
     var email = ReviewSecurity_.active(), props = PropertiesService.getScriptProperties();
     if (props.getProperty('REVIEW_MASTER_ACCESS') !== 'true' && email !== ReviewSecurity_.finance) throw new Error('テスト中の利用者はfinance@だけです。');
     var c = Stage2Drive_.config(), drive = Stage2Drive_.open(c); drive.within(c.LEDGER_SPREADSHEET_ID);
-    var ledger = Stage2Ledger_.open(SpreadsheetApp.openById(c.LEDGER_SPREADSHEET_ID)), masters = ledger.masters();
+    var ledger = Stage2Ledger_.open(SpreadsheetApp.openById(c.LEDGER_SPREADSHEET_ID), true), masters = ledger.masters();
     var user = ReviewSecurity_.actor(email, masters.people, ledger.rows('settings'), props.getProperty('REVIEW_MASTER_ACCESS'));
-    return { c: c, drive: drive, ledger: ledger, masters: masters, user: user, props: props };
+    return { sources: {}, c: c, drive: drive, ledger: ledger, masters: masters, user: user, props: props };
   }
   function row(c, key) {
     var rows = c.ledger.rows('minutes').filter(function (r) { return r.meeting_key === key; });
@@ -25,18 +25,35 @@ var Review_ = (function () {
     return { total: rows.length, rows: rows.slice(offset, offset + 50).map(function (r) { var o = safe(r); o.taskCount = proposals(c, r); return o; }), offset: offset };
   }
   function localDate(value) { var ms=Date.parse(value); return Number.isFinite(ms) ? new Date(ms+9*3600000).toISOString().slice(0,10) : ''; }
-  function source(c, r) { var steps = json(r.step_done_json, {}); try { return steps.jsonId ? c.drive.readJSON(steps.jsonId) : {}; } catch(e) { return {summary:{error:'元の判定JSONを読み取れません。再実行前に管理者が確認してください。'}}; } }
-  function proposals(c, r) { var j = source(c, r); return (j.task_proposals || []).length; }
-  function notion() { var env = NotionTestEnvironment_.open(true, 'review'); env.minutesSchema = env.schema(env.ids.minutes, 'minutes'); env.schema(env.ids.tasks, 'tasks'); return env; }
-  function detail(c, key) {
+  function source(c, r) {
+    var steps=json(r.step_done_json,{}), display=steps.reviewDisplay;
+    if (display && display.jsonId===steps.jsonId && display.hash===steps.hash) return display;
+    if (c.sources[r.meeting_key]) return c.sources[r.meeting_key];
+    var key='json:'+c.c.FOLDER_SYSTEM_TEST_ID+':'+steps.jsonId+':'+(steps.hash||''), cached=ReviewCache_.get(key);
+    if (cached) return c.sources[r.meeting_key]=cached;
+    try {
+      var j=steps.jsonId ? c.drive.readJSON(steps.jsonId) : {}, value={summary:j.summary||{},taskCount:(j.task_proposals||[]).length};
+      if(steps.jsonId) ReviewCache_.put(key,value,120);
+      return c.sources[r.meeting_key]=value;
+    } catch(e) { return {summary:{error:'元の判定JSONを読み取れません。再実行前に管理者が確認してください。'},taskCount:0}; }
+  }
+  function proposals(c,r) { return source(c,r).taskCount || 0; }
+  function notion(readOnly, needTasks) {
+    var env=NotionTestEnvironment_.open(true,'review');
+    env.minutesSchema=env.schema(env.ids.minutes,'minutes',!!readOnly);
+    if(needTasks) env.schema(env.ids.tasks,'tasks',!!readOnly);
+    return env;
+  }
+  function detail(c, key, compact) {
     var r = row(c, key), out = safe(r), j = source(c, r), steps = json(r.step_done_json, {});
     out.attendees = json(r.attendees_json, []).map(function (a) { var address = typeof a === 'string' ? a : a.email; return { email: address, internal: MeetingRules_.classify([{email:address}], c.masters).scope === '社内' }; });
-    out.summary = j.summary || {}; out.taskCount = (j.task_proposals || []).length; out.links = [];
+    out.summary = j.summary || {}; out.taskCount = j.taskCount || 0; out.links = [];
     var raw=json(r.raw_file_ids_json,{}), fileLinks=[['会議フォルダ',r.meeting_folder_id],['議事録',r.minutes_doc_id]];
     [['recording','録画'],['transcript','文字起こし'],['gemini','Geminiメモ']].forEach(function(pair){if (raw[pair[0]]) fileLinks.push([pair[1],raw[pair[0]]]);});
     out.fileStatus={recording:raw.recording?'あり':'なし',transcript:raw.transcript?'あり':'なし',gemini:raw.gemini?'あり':'なし'};
-    fileLinks.forEach(function (pair) { if (pair[1]) { c.drive.within(pair[1]); out.links.push({ title: pair[0], url: 'https://drive.google.com/open?id=' + encodeURIComponent(pair[1]) }); } });
-    if (r.notion_page_id) { notion().verifyMinutesPage(r.notion_page_id, r.status === '対象外' || !!(steps.review && steps.review.plan.archive)); out.links.push({ title: 'Notion', url: 'https://www.notion.so/' + r.notion_page_id.replace(/-/g,'') }); }
+    var children=!compact && r.meeting_folder_id ? c.drive.children(r.meeting_folder_id).map(function(f){return f.id;}) : null;
+    fileLinks.forEach(function (pair) { if (pair[1]) { if (!compact && pair[1]!==r.meeting_folder_id && children && !children.includes(pair[1])) return; out.links.push({ title: pair[0], url: 'https://drive.google.com/open?id=' + encodeURIComponent(pair[1]) }); } });
+    if (r.notion_page_id && /^[0-9a-f-]{32,36}$/i.test(r.notion_page_id)) { out.links.push({ title: 'Notion', url: 'https://www.notion.so/' + r.notion_page_id.replace(/-/g,'') }); }
     out.history = c.ledger.rows('change_log').filter(function (h) { return h.meeting_key === key; }).slice(-30).map(function (h) { return { at: String(h.at), actor: h.actor, action: h.kind, before: h.before_json, after: h.after_json, result: h.result }; });
     out.pending = steps.review ? { state: steps.review.state, action: steps.review.plan.action, drive: !!steps.review.drive, notion: !!steps.review.notion, chatwork: !!steps.review.chatwork } : null;
     return out;
@@ -44,13 +61,15 @@ var Review_ = (function () {
   function choices(c) {
     var folders = c.masters.folders.filter(function (f) { return c.user.admin || (!f.rank || c.user.ranks.includes(String(f.rank))); }).map(function (f) { return f.placement; });
     // プロジェクト候補も所属確認を行います。非管理者には領域の確認できない候補を公開しません。
-    var projects = [];
-    {
+    var projectKey='projects:'+c.c.FOLDER_SYSTEM_TEST_ID+':'+c.c.NOTION_DB_TASKS_TEST+':'+(c.user.admin?'admin':'reviewer'), cached=ReviewCache_.get(projectKey);
+    var projects = cached || [];
+    if (!cached) {
       var ref = c.drive.folder(c.drive.root.id, 'ref', false), files = c.drive.children(ref.id).filter(function (f) { return f.name === 'projects.json'; });
       if (files.length > 1) throw new Error('projects.jsonが重複しています。');
-      var env = notion();
+      var env=NotionTestEnvironment_.open(true,'review'); env.schema(env.ids.tasks,'tasks',true);
       if (files.length && c.user.admin) { var data = c.drive.readJSON(files[0].id); var candidates = Array.isArray(data) ? data : data.projects || []; candidates.slice(0,500).forEach(function (p) { if (p.id && env.project(p.id)) projects.push({ id: p.id, domains: ReviewSecurity_.list(p.domains), title: String(p.title || p.name || p.id) }); }); }
       else projects = env.projects();
+      ReviewCache_.put(projectKey,projects,120);
     }
     projects = projects.filter(function (p) { return projectVisible(c,p); }).map(function (p) { return {id:p.id,title:p.title}; });
     return { folders: folders, projects: projects };
@@ -63,7 +82,7 @@ var Review_ = (function () {
     });
   }
   function destination(c, r, plan, create) {
-    if (plan.archive) return c.drive.folder(c.drive.root.id, '99_対象外', false).id;
+    if (plan.exclude) return c.drive.folder(c.drive.root.id, '99_対象外', false).id;
     if (!plan.updateProperties) return r.folder_id_final;
     if (plan.newClient) {
       if (!c.user.admin) throw new Error('新規顧客の再実行も管理者専用です。');
@@ -110,7 +129,7 @@ var Review_ = (function () {
       var c = context(); ReviewSecurity_.verifyNonce(c.user, request.nonce);
       var r = row(c, request.meetingKey);
       if (!Number.isInteger(request.version) || Number(r.version) !== request.version) throw new Error('先に更新されました。画面を読み込み直してください。');
-      var steps = json(r.step_done_json, {}), journal = steps.review, retry = request.action === 'retry';
+      var steps = json(r.step_done_json, {}), journal = ReviewPlan_.migrateJournal(steps.review), retry = request.action === 'retry';
       if (retry && r.status !== '要対応') throw new Error('再実行は要対応のときだけです。');
       if (retry && !journal) {
         if (!c.user.admin) throw new Error('取り込みの再実行は管理者専用です。');
@@ -119,40 +138,45 @@ var Review_ = (function () {
       }
       if (!retry && journal && journal.state !== 'done') throw new Error('未完了の処理を再実行してください。');
       if (!retry) journal = { id: Utilities.getUuid(), actor: c.user.email, plan: ReviewPlan_.plan(r,request,c.masters,c.user,new Date().toISOString()), state:'running' };
-      var env = notion(), plan = journal.plan, desired = Object.assign({},r,plan.desired), verified = [];
-      env.verifyMinutesPage(r.notion_page_id, plan.archive);
-      ReviewSecurity_.list(desired.related_project_ids_final).forEach(function (id) { var found = env.project(id); if (found) verified.push(id); });
-      if (!c.user.admin) { var visible=choices(c).projects.map(function(p){return p.id;}); if (ReviewSecurity_.list(desired.related_project_ids_final).some(function(id){return !visible.includes(id);})) throw new Error('関連プロジェクトの閲覧・操作権限を確認できません。'); }
-      var payload = plan.updateProperties ? ReviewPlan_.notionProperties(desired, env.minutesSchema, verified) : null;
+      var plan=journal.plan, desired=Object.assign({},r,plan.desired), projectIds=ReviewSecurity_.list(desired.related_project_ids_final), env=notion(false,plan.updateProperties && projectIds.length>0), verified=[];
+      env.verifyMinutesPage(r.notion_page_id);
+      (plan.updateProperties ? projectIds : []).forEach(function (id) { var found = env.project(id); if (found) verified.push(id); });
+      if (!c.user.admin && plan.updateProperties && projectIds.some(function(id){var info=env.projectDetails(id);return !info || !projectVisible(c,info);})) throw new Error('関連プロジェクトの閲覧・操作権限を確認できません。');
+      var payload = plan.updateProperties ? ReviewPlan_.notionProperties(desired, env.minutesSchema, verified) : ReviewPlan_.statusProperties(desired.status,env.minutesSchema);
       var dest = destination(c,r,plan,false); var meetingFolder = c.drive.within(r.meeting_folder_id);
-      if (journal.drive && (plan.archive || plan.updateProperties) && !(meetingFolder.parents || []).includes(plan.desired.folder_id_final)) throw new Error('処理記録と現在の格納先が異なります。管理者が確認してください。');
-      if (c.c.DRY_RUN === 'true') { log(c,'確認画面の反映予定',r,JSON.stringify({plan:plan,destination:dest,properties:payload})); chat(c,r,journal,function(){},true); return { message:'予定をdry_run_logに記録しました。議事録は変更していません。' }; }
+      if (journal.drive && (plan.exclude || plan.updateProperties) && !(meetingFolder.parents || []).includes(plan.desired.folder_id_final)) throw new Error('処理記録と現在の格納先が異なります。管理者が確認してください。');
+      if (c.c.DRY_RUN === 'true') { log(c,'確認画面の反映予定',r,JSON.stringify({plan:plan,destination:dest,properties:payload})); chat(c,r,journal,function(){},true); return { message:'予定をdry_run_logに記録しました。議事録は変更していません。',row:detail(c,r.meeting_key,true),dryRun:true }; }
+      function result(message,failed) { return {message:message,failed:!!failed,dryRun:c.c.DRY_RUN==='true',version:Number(r.version),removedKey:r.meeting_key,row:ReviewSecurity_.canView(c.user,r,c.masters)?detail(c,r.meeting_key,true):null}; }
       function save() { steps.review=journal; r.step_done_json=JSON.stringify(steps); c.ledger.save(r); }
       function fail(step) { if (c.user.email === ReviewSecurity_.finance && c.props.getProperty('REVIEW_TEST_FAIL_STEP') === step) { c.props.deleteProperty('REVIEW_TEST_FAIL_STEP'); throw new Error('再実行確認用に停止しました（'+step+'）。'); } }
       journal.state='running'; save();
       try {
         if (!journal.drive) {
           dest=destination(c,r,plan,true);
-          if (plan.updateProperties || plan.archive) { var file=c.drive.within(r.meeting_folder_id); if (!(file.parents || []).includes(dest)) c.drive.move(r.meeting_folder_id,dest,'meeting_folder',r.meeting_key); plan.desired.folder_id_final=dest; if (plan.archive) plan.desired.placement_final='99_対象外'; }
+          if (plan.updateProperties || plan.exclude) { var file=c.drive.within(r.meeting_folder_id); if (!(file.parents || []).includes(dest)) c.drive.move(r.meeting_folder_id,dest,'meeting_folder',r.meeting_key); plan.desired.folder_id_final=dest; if (plan.exclude) plan.desired.placement_final='99_対象外'; }
           journal.drive=true; save(); fail('after_drive');
         }
-        if (!journal.notion) { if (plan.archive || plan.updateProperties) env.updateReviewPage(r.notion_page_id,payload,plan.archive); journal.notion=true; save(); fail('after_notion'); }
+        if (!journal.notion) { env.updateReviewPage(r.notion_page_id,payload); journal.notion=true; save(); fail('after_notion'); }
         if (!journal.chatwork) { chat(c,r,journal,save,false); journal.chatwork=true; save(); fail('after_chatwork'); }
         var changeId='review:'+journal.id;
         if (!c.ledger.rows('change_log').some(function(h){return h.change_id===changeId;})) c.ledger.append('change_log',{change_id:changeId,at:new Date().toISOString(),meeting_key:r.meeting_key,kind:plan.action,target:'議事録',before_json:JSON.stringify(plan.before),after_json:JSON.stringify(plan.desired),actor:journal.actor,result:'成功'});
-        Object.assign(r,plan.desired); if (plan.archive) r.notion_status='アーカイブ済み'; r.last_error=''; journal.state='done'; save();
-        return {message:'反映しました。',version:Number(r.version)};
-      } catch(e) { journal.state='failed'; r.status='要対応'; var error=String(e.message || '不明なエラー'); [c.c.NOTION_TOKEN,c.c.CHATWORK_TOKEN].filter(Boolean).forEach(function(secret){error=error.split(secret).join('[非表示]');}); r.last_error=error; save(); return {message:'処理を停止しました。'+error+' 「再実行」で続きから再開できます。',failed:true}; }
+        Object.assign(r,plan.desired); r.notion_status='反映済み（'+plan.desired.status+'）'; r.last_error=''; journal.state='done'; save();
+        return result('反映しました。',false);
+      } catch(e) { journal.state='failed'; r.status='要対応'; var error=String(e.message || '不明なエラー'); [c.c.NOTION_TOKEN,c.c.CHATWORK_TOKEN].filter(Boolean).forEach(function(secret){error=error.split(secret).join('[非表示]');}); r.last_error=error; save(); return result('処理を停止しました。'+error+' 「再実行」で続きから再開できます。',true); }
     });
   }
-  return {context:context,list:list,detail:detail,choices:choices,submit:submit};
+  return {context:context,list:list,detail:detail,source:source,choices:choices,submit:submit};
 })();
 function doGet() {
-  try { Review_.context(); return HtmlService.createTemplateFromFile('Index').evaluate().setTitle('議事録の確認'); }
-  catch(e) { return HtmlService.createHtmlOutput('この確認画面を開く権限がないか、設定が未完了です。finance@でログインし、管理者に確認してください。'); }
+  try {
+    var email=ReviewSecurity_.active();
+    if(PropertiesService.getScriptProperties().getProperty('REVIEW_MASTER_ACCESS')!=='true' && email!==ReviewSecurity_.finance) throw new Error('権限がありません。');
+    return HtmlService.createTemplateFromFile('Index').evaluate().setTitle('議事録の確認');
+  } catch(e) { return HtmlService.createHtmlOutput('この確認画面を開く権限がないか、設定が未完了です。finance@でログインし、管理者に確認してください。'); }
 }
 function includeReview_(name) { if (!['Styles','Scripts'].includes(name)) throw new Error('不正な画面部品です。'); return HtmlService.createHtmlOutputFromFile(name).getContent(); }
-function reviewBootstrap() { var c=Review_.context(); return {actor:c.user.email,admin:c.user.admin,dryRun:c.c.DRY_RUN==='true',nonce:ReviewSecurity_.nonce(c.user),choices:Review_.choices(c),list:Review_.list(c,{})}; }
-function reviewList(filters) { var c=Review_.context(); return Review_.list(c,filters); }
-function reviewDetail(key) { var c=Review_.context(); return Review_.detail(c,key); }
-function reviewSubmit(request) { return Review_.submit(request); }
+function reviewTimed_(label,fn) { var start=Date.now();try{return fn();}finally{console.log('確認画面 '+label+'：'+(Date.now()-start)+'ms');} }
+function reviewBootstrap() { return reviewTimed_('初期表示',function(){ var c=Review_.context(); return {actor:c.user.email,admin:c.user.admin,dryRun:c.c.DRY_RUN==='true',nonce:ReviewSecurity_.nonce(c.user),choices:Review_.choices(c),list:Review_.list(c,{})}; }); }
+function reviewList(filters) { return reviewTimed_('一覧',function(){ var c=Review_.context(); return Review_.list(c,filters); }); }
+function reviewDetail(key) { return reviewTimed_('詳細',function(){ var c=Review_.context(); return Review_.detail(c,key); }); }
+function reviewSubmit(request) { return reviewTimed_('操作',function(){ return Review_.submit(request); }); }

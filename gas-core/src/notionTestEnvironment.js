@@ -13,20 +13,22 @@ var NotionTestEnvironment_ = (function () {
       var name = k === 'minutes' ? 'NOTION_DB_MINUTES_TEST' : 'NOTION_DB_TASKS_TEST';
       if (normalize(properties.getProperty(name)) !== normalize(ids[k])) throw new Error(name + ' が確認済みテストDBのIDと一致しません。');
     });
-    var verified = {}, allowedPages = new Set(), inboxPatch = null;
+    var verifiedProjectInfo = {}, verified = {}, allowedPages = new Set(), inboxPatch = null, statusPatch = null, lastRequestAt = 0;
     function request(method, path, body, optionalStatuses) {
       if (method !== 'get') {
         var create = method === 'post' && path === 'pages' && verified.minutes && verified.tasks && body.parent && body.parent.type === 'data_source_id' && normalize(body.parent.data_source_id) === normalize(verified.minutes.sourceId);
         var append = /^blocks\/([^/]+)\/children$/.exec(path);
         var appendAllowed = method === 'patch' && append && allowedPages.has(normalize(append[1])) && body.children && body.children.length <= 100;
-        var reviewAllowed = purpose === 'review' && method === 'patch' && /^pages\/[^/]+$/.test(path) && allowedPages.has(normalize(path.split('/')[1])) && Object.keys(body).every(function (k) { return k === 'properties' || k === 'archived'; }) && (!body.properties || Object.keys(body.properties).every(function (k) { return ['議事録名', '事業部領域', '関連するプロジェクト'].includes(k); }));
+        var reviewAllowed = ['review', 'review-setup'].includes(purpose) && method === 'patch' && /^pages\/[^/]+$/.test(path) && allowedPages.has(normalize(path.split('/')[1])) && Object.keys(body).every(function (k) { return k === 'properties'; }) && (!body.properties || Object.keys(body.properties).every(function (k) { return ['議事録名', '事業部領域', '関連するプロジェクト', '確認状態'].includes(k); }));
         var query = method === 'post' && verified.tasks && path === 'data_sources/' + verified.tasks.sourceId + '/query';
+        var statusAllowed = purpose === 'review-setup' && statusPatch && method === 'patch' && path === statusPatch.path && JSON.stringify(body) === statusPatch.body;
         var optionAllowed = purpose === 'inbox-options' && inboxPatch && method === 'patch' && path === inboxPatch.path && JSON.stringify(body) === inboxPatch.body;
-        if (!query && (!writingWorkflow || dryRun !== 'false' || !(create || appendAllowed || optionAllowed || reviewAllowed))) throw new Error('確認済みテスト対象以外への書き込みは禁止です。');
+        if (!query && (!writingWorkflow || dryRun !== 'false' || !(create || appendAllowed || optionAllowed || reviewAllowed || statusAllowed))) throw new Error('確認済みテスト対象以外への書き込みは禁止です。');
       }
       var options = { method: method, headers: { Authorization: 'Bearer ' + token, 'Notion-Version': '2025-09-03' }, muteHttpExceptions: true };
       if (body) { options.contentType = 'application/json'; options.payload = JSON.stringify(body); }
-      Utilities.sleep(350);
+      if (lastRequestAt) { var pause=350-(Date.now()-lastRequestAt); if(pause>0) Utilities.sleep(pause); }
+      lastRequestAt=Date.now();
       var response;
       try { response = UrlFetchApp.fetch('https://api.notion.com/v1/' + path, options); }
       catch (e) { throw new Error('Notionとの通信に失敗しました。書き込み結果は実Notionで確認してください。'); }
@@ -38,7 +40,9 @@ var NotionTestEnvironment_ = (function () {
       }
       return data;
     }
-    function schema(databaseId, key) {
+    function schema(databaseId, key, useCache) {
+      var cacheKey='schema:'+normalize(databaseId), cached=useCache && purpose==='review' && key && typeof ReviewCache_ !== 'undefined' && ReviewCache_.get(cacheKey);
+      if (cached && normalize(cached.databaseId)===normalize(ids[key]) && cached.sourceId && cached.properties) { verified[key]=cached; return cached; }
       var db = request('get', 'databases/' + encodeURIComponent(databaseId));
       if (normalize(db.id) !== normalize(databaseId) || !db.parent || db.parent.type !== 'page_id' || normalize(db.parent.page_id) !== normalize(parent) || db.archived || db.in_trash) throw new Error('管理用ページ下の有効なDBではありません。');
       if (!db.data_sources || db.data_sources.length !== 1) throw new Error('DBのデータソースを1つに特定できません。');
@@ -50,6 +54,7 @@ var NotionTestEnvironment_ = (function () {
         verified[key] = result;
         if (verified.minutes && verified.tasks && normalize(verified.minutes.sourceId) === normalize(verified.tasks.sourceId)) throw new Error('テスト用2DBのデータソースが同一です。');
       }
+      if (purpose==='review' && key && typeof ReviewCache_ !== 'undefined') ReviewCache_.put(cacheKey,result,120);
       return result;
     }
     function discoverInbox() {
@@ -67,18 +72,33 @@ var NotionTestEnvironment_ = (function () {
     function project(id) {
       var page = request('get', 'pages/' + encodeURIComponent(id), null, [400, 403, 404]);
       if (!page || page.archived || page.in_trash || !page.parent || !verified.tasks) return null;
-      return page.parent.type === 'data_source_id' && normalize(page.parent.data_source_id) === normalize(verified.tasks.sourceId) ||
-        page.parent.type === 'database_id' && normalize(page.parent.database_id) === normalize(ids.tasks) ? page.id : null;
+      var belongs=page.parent.type === 'data_source_id' && normalize(page.parent.data_source_id) === normalize(verified.tasks.sourceId) || page.parent.type === 'database_id' && normalize(page.parent.database_id) === normalize(ids.tasks);
+      if(!belongs) return null;
+      verifiedProjectInfo[id]={id:page.id,domains:((((page.properties || {})['事業部領域'] || {}).multi_select) || []).map(function(o){return o.name;})};
+      return page.id;
     }
-    function verifyMinutesPage(id, allowArchived) {
+    function verifyMinutesPage(id) {
       var page = request('get', 'pages/' + encodeURIComponent(id));
-      if (!verified.minutes || ((page.archived || page.in_trash) && !(purpose === 'review' && allowArchived)) || !page.parent || !(page.parent.type === 'data_source_id' && normalize(page.parent.data_source_id) === normalize(verified.minutes.sourceId) || page.parent.type === 'database_id' && normalize(page.parent.database_id) === normalize(ids.minutes))) throw new Error('記録済みページがテスト議事録DBに属していません。');
+      if (!verified.minutes || (page.archived || page.in_trash) || !page.parent || !(page.parent.type === 'data_source_id' && normalize(page.parent.data_source_id) === normalize(verified.minutes.sourceId) || page.parent.type === 'database_id' && normalize(page.parent.database_id) === normalize(ids.minutes))) throw new Error('記録済みページがテスト議事録DBに属していません。');
       allowedPages.add(normalize(page.id)); return page;
     }
-    function updateReviewPage(id, props, archive) {
-      if (purpose !== 'review') throw new Error('確認画面専用です。');
-      verifyMinutesPage(id, archive);
-      return request('patch', 'pages/' + id, archive ? { archived: true } : { properties: props });
+    function updateReviewPage(id, props) {
+      if (!['review','review-setup'].includes(purpose)) throw new Error('確認画面専用です。');
+      if (arguments.length>2 || !props || Object.keys(props).some(function(k){return !['議事録名','事業部領域','関連するプロジェクト','確認状態'].includes(k);})) throw new Error('状態を含むプロパティ更新だけを許可します。ゴミ箱は使用できません。');
+      if (!allowedPages.has(normalize(id))) verifyMinutesPage(id);
+      return request('patch', 'pages/' + id, { properties: props });
+    }
+    function prepareReviewStatus() {
+      if (purpose!=='review-setup' || !verified.minutes) throw new Error('テスト議事録DBの準備専用です。');
+      var plan=ReviewPlan_.statusSchema(verified.minutes.properties['確認状態']);
+      console.log('確認状態の追加予定: '+JSON.stringify(plan.added));
+      if (!plan.changed || dryRun==='true') return plan;
+      var body={properties:{'確認状態':{type:'select',select:{options:plan.options}}}};
+      statusPatch={path:'data_sources/'+verified.minutes.sourceId,body:JSON.stringify(body)};
+      request('patch',statusPatch.path,body);statusPatch=null;
+      verified.minutes.properties['確認状態']={type:'select',select:{options:plan.options}};
+      if (typeof ReviewCache_ !== 'undefined') ReviewCache_.remove('schema:'+normalize(ids.minutes));
+      return plan;
     }
     function projects() {
       if (!verified.tasks) throw new Error('テストDBを確認してください。');
@@ -111,7 +131,7 @@ var NotionTestEnvironment_ = (function () {
     }
     return { properties: properties, dryRun: dryRun === 'true', schema: schema, inbox: discoverInbox, project: project, createPage: createPage,
       verifyMinutesPage: verifyMinutesPage, appendBlocks: appendBlocks, addInboxOptions: addInboxOptions,
-      updateReviewPage: updateReviewPage, projects: projects,
+      updateReviewPage: updateReviewPage, prepareReviewStatus: prepareReviewStatus, projectDetails:function(id){return verifiedProjectInfo[id] || null;}, projects: projects,
       ids: { minutes: ids.minutes, tasks: ids.tasks } };
   }
   return { open: open, normalize: normalize };

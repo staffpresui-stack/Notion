@@ -7,21 +7,32 @@ var Stage2Ledger_ = (function () {
       if (!sheet.getLastRow()) sheet.appendRow(p.headers);
     });
   }
-  function open(book) {
-    Ledger_.plan(book).forEach(function (p) { if (p.action !== '変更なし') throw new Error('台帳が未初期化です。setupTestWorkspaceを実行してください。'); });
+  function open(book, fast) {
+    var snapshots = {};
+    if (!fast) Ledger_.plan(book).forEach(function (p) { if (p.action !== '変更なし') throw new Error('台帳が未初期化です。setupTestWorkspaceを実行してください。'); });
     function rows(name) {
+      if (fast && snapshots[name]) return snapshots[name];
       var sheet = book.getSheetByName(name), headers = Ledger_.headers[name].split(',');
+      if (!sheet || !sheet.getLastRow()) throw new Error('台帳が未初期化です: ' + name);
+      if (fast) {
+        var values=sheet.getRange(1,1,sheet.getLastRow(),Math.max(headers.length,sheet.getLastColumn())).getValues();
+        if (JSON.stringify(values[0])!==JSON.stringify(headers)) throw new Error(name+' の見出しが仕様と異なります。上書きしません。');
+        snapshots[name]=values.slice(1).map(function(values,i){var r={_row:i+2};headers.forEach(function(h,j){r[h]=values[j];});return r;}); return snapshots[name];
+      }
       return sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues().map(function (values, i) {
         var r = { _row: i + 2 }; headers.forEach(function (h, j) { r[h] = values[j]; }); return r;
       });
     }
     function append(name, data) {
+      if (fast) rows(name);
       var sheet = book.getSheetByName(name), values = Ledger_.headers[name].split(',').map(function (h) { return text(data[h]); });
-      sheet.appendRow(values); data._row = sheet.getLastRow(); return data;
+      sheet.appendRow(values); data._row = sheet.getLastRow(); if (fast && snapshots[name]) snapshots[name].push(data); return data;
     }
     function save(row) {
       row.version = Number(row.version || 0) + 1; row.updated_at = new Date().toISOString();
       if (!row._row) return append('minutes', row);
+      if (fast) rows('minutes');
+      if (fast) snapshots.minutes = snapshots.minutes.map(function(r){return r._row===row._row ? row : r;});
       var headers = Ledger_.headers.minutes.split(',');
       book.getSheetByName('minutes').getRange(row._row, 1, 1, headers.length).setValues([headers.map(function (h) { return text(row[h]); })]);
       return row;

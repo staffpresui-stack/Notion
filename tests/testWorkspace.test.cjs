@@ -171,3 +171,11 @@ test('実際の準備アダプタでfixture投入は再実行しても3件を二
   assert.equal(Object.values(h.files).filter(f => f.appProperties.kind === 'minutes').length, 3);
   h.ctx.seedFixtureInbox(); assert.equal(Object.keys(h.files).length, count);
 });
+test('Drive所属確認は同一リクエスト内で共有祖先を再取得せず、移動後は対象を再取得する',()=>{
+ const h=harness('false',true);h.ctx.setupSharedTestWorkspace();h.ctx.seedFixtureInbox();h.calls.length=0;const drive=h.ctx.Stage2Drive_.open(h.ctx.Stage2Drive_.config());const raw=drive.folder(drive.root.id,'00_受信',false),file=drive.children(raw.id)[0];drive.within(file.id);const count=h.calls.filter(c=>c.method==='get').length;drive.within(file.id);assert.equal(h.calls.filter(c=>c.method==='get').length,count);const dest=drive.folder(drive.root.id,'99_対象外',false);drive.move(file.id,dest.id);const n=h.calls.filter(c=>c.method==='get').length;assert.equal(drive.within(file.id).parents[0],dest.id);assert.equal(h.calls.filter(c=>c.method==='get').length,n+1);
+});
+test('高速台帳は使用シートを1回ずつまとめて取得し、更新後も同一要求内で最新値を返す',()=>{
+ const h=harness();const setup=h.ctx.setupTestWorkspace(),book=h.books[setup.ledger];let reads=0;for(const sheet of Object.values(book.sheets)){const range=sheet.getRange;sheet.getRange=(...args)=>{const r=range(...args),get=r.getValues;return {...r,getValues:()=>{reads++;return get()}}}};
+ const ledger=h.ctx.Stage2Ledger_.open(book,true);ledger.rows('masters_people');ledger.rows('masters_people');assert.equal(reads,1);const r={meeting_key:'test',status:'確認待ち'};ledger.save(r);assert.equal(reads,2);r.status='確定';ledger.save(r);assert.equal(ledger.rows('minutes')[0].status,'確定');assert.equal(reads,2);
+ const fresh=h.ctx.Stage2Ledger_.open(book,true);assert.equal(fresh.rows('minutes')[0].status,'確定');assert.equal(reads,3);
+});

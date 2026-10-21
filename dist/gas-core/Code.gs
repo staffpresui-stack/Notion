@@ -382,6 +382,8 @@ var InboxIngest_ = (function () {
           steps = { jsonId: file.id, rawFolderId: folder.id, manifestId: manifests[0].id, hash: hash(j), contentHash: hash(blocks), modifiedTime: file.modifiedTime };
           save();
         }
+        var display={jsonId:steps.jsonId,hash:steps.hash,summary:j.summary||{},taskCount:(j.task_proposals||[]).length};
+        if(JSON.stringify(display).length<12000) steps.reviewDisplay=display; else delete steps.reviewDisplay;
         steps.error = false; row.status = plan.placement.status;
         if (!row.meeting_folder_id) {
           var name = Utilities.formatDate(new Date(manifest.start), 'Asia/Tokyo', 'yyyy-MM-dd_HHmm') + '_' + InboxPlan_.safeName(manifest.title);
@@ -654,7 +656,8 @@ var NotionFixturePlan_ = (function () {
       if (!p || !wanted[name].includes(p.type)) differences.push({ kind: optionalBody ? '本文での提供可・要確認' : '項目名・型', name: name, expected: wanted[name], actual: p ? p.type : '未設定' });
     });
     Object.keys(properties).filter(function (name) { return !wanted[name] && !(key === 'inbox' && properties[name].type === 'title'); }).forEach(function (name) {
-      if (key === 'tasks' && ['関連プロジェクト（参照元）', 'サブアイテム', '関連プロジェクト'].includes(name)) knownAdditions.push({ name: name, type: properties[name].type });
+      if (key === 'minutes' && name==='確認状態') knownAdditions.push({name:name,type:properties[name].type});
+      else if (key === 'tasks' && ['関連プロジェクト（参照元）', 'サブアイテム', '関連プロジェクト'].includes(name)) knownAdditions.push({ name: name, type: properties[name].type });
       else differences.push({ kind: '追加項目', name: name, actual: properties[name].type });
     });
     if (key === 'inbox' && !Object.keys(properties).some(function (n) { return properties[n].type === 'title'; })) differences.push({ kind: '項目名・型', name: 'タイトル', expected: ['title'], actual: '未設定' });
@@ -703,6 +706,8 @@ var NotionFixturePlan_ = (function () {
       '事業部領域': { multi_select: selected.map(function (name) { return { name: name }; }) },
       '関連するプロジェクト': { relation: placement.related_project_ids.map(function (id) { return { id: id }; }) }
     };
+    var state=minutes.properties['確認状態'];
+    if(state && state.type==='select' && (state.select.options||[]).some(function(o){return o.name===placement.status;})) properties['確認状態']={select:{name:placement.status}};
     var children = [block('heading_2', '基本情報'), block('paragraph', '日時：' + manifest.start),
       block('paragraph', '参加者：' + participants.map(function (a) { return a.name || a.email || '要確認'; }).join('、')),
       block('paragraph', '記録元：' + (manifest.source === 'meet' ? 'Meet' : 'tl;dv')),
@@ -1004,20 +1009,22 @@ var NotionTestEnvironment_ = (function () {
       var name = k === 'minutes' ? 'NOTION_DB_MINUTES_TEST' : 'NOTION_DB_TASKS_TEST';
       if (normalize(properties.getProperty(name)) !== normalize(ids[k])) throw new Error(name + ' が確認済みテストDBのIDと一致しません。');
     });
-    var verified = {}, allowedPages = new Set(), inboxPatch = null;
+    var verifiedProjectInfo = {}, verified = {}, allowedPages = new Set(), inboxPatch = null, statusPatch = null, lastRequestAt = 0;
     function request(method, path, body, optionalStatuses) {
       if (method !== 'get') {
         var create = method === 'post' && path === 'pages' && verified.minutes && verified.tasks && body.parent && body.parent.type === 'data_source_id' && normalize(body.parent.data_source_id) === normalize(verified.minutes.sourceId);
         var append = /^blocks\/([^/]+)\/children$/.exec(path);
         var appendAllowed = method === 'patch' && append && allowedPages.has(normalize(append[1])) && body.children && body.children.length <= 100;
-        var reviewAllowed = purpose === 'review' && method === 'patch' && /^pages\/[^/]+$/.test(path) && allowedPages.has(normalize(path.split('/')[1])) && Object.keys(body).every(function (k) { return k === 'properties' || k === 'archived'; }) && (!body.properties || Object.keys(body.properties).every(function (k) { return ['議事録名', '事業部領域', '関連するプロジェクト'].includes(k); }));
+        var reviewAllowed = ['review', 'review-setup'].includes(purpose) && method === 'patch' && /^pages\/[^/]+$/.test(path) && allowedPages.has(normalize(path.split('/')[1])) && Object.keys(body).every(function (k) { return k === 'properties'; }) && (!body.properties || Object.keys(body.properties).every(function (k) { return ['議事録名', '事業部領域', '関連するプロジェクト', '確認状態'].includes(k); }));
         var query = method === 'post' && verified.tasks && path === 'data_sources/' + verified.tasks.sourceId + '/query';
+        var statusAllowed = purpose === 'review-setup' && statusPatch && method === 'patch' && path === statusPatch.path && JSON.stringify(body) === statusPatch.body;
         var optionAllowed = purpose === 'inbox-options' && inboxPatch && method === 'patch' && path === inboxPatch.path && JSON.stringify(body) === inboxPatch.body;
-        if (!query && (!writingWorkflow || dryRun !== 'false' || !(create || appendAllowed || optionAllowed || reviewAllowed))) throw new Error('確認済みテスト対象以外への書き込みは禁止です。');
+        if (!query && (!writingWorkflow || dryRun !== 'false' || !(create || appendAllowed || optionAllowed || reviewAllowed || statusAllowed))) throw new Error('確認済みテスト対象以外への書き込みは禁止です。');
       }
       var options = { method: method, headers: { Authorization: 'Bearer ' + token, 'Notion-Version': '2025-09-03' }, muteHttpExceptions: true };
       if (body) { options.contentType = 'application/json'; options.payload = JSON.stringify(body); }
-      Utilities.sleep(350);
+      if (lastRequestAt) { var pause=350-(Date.now()-lastRequestAt); if(pause>0) Utilities.sleep(pause); }
+      lastRequestAt=Date.now();
       var response;
       try { response = UrlFetchApp.fetch('https://api.notion.com/v1/' + path, options); }
       catch (e) { throw new Error('Notionとの通信に失敗しました。書き込み結果は実Notionで確認してください。'); }
@@ -1029,7 +1036,9 @@ var NotionTestEnvironment_ = (function () {
       }
       return data;
     }
-    function schema(databaseId, key) {
+    function schema(databaseId, key, useCache) {
+      var cacheKey='schema:'+normalize(databaseId), cached=useCache && purpose==='review' && key && typeof ReviewCache_ !== 'undefined' && ReviewCache_.get(cacheKey);
+      if (cached && normalize(cached.databaseId)===normalize(ids[key]) && cached.sourceId && cached.properties) { verified[key]=cached; return cached; }
       var db = request('get', 'databases/' + encodeURIComponent(databaseId));
       if (normalize(db.id) !== normalize(databaseId) || !db.parent || db.parent.type !== 'page_id' || normalize(db.parent.page_id) !== normalize(parent) || db.archived || db.in_trash) throw new Error('管理用ページ下の有効なDBではありません。');
       if (!db.data_sources || db.data_sources.length !== 1) throw new Error('DBのデータソースを1つに特定できません。');
@@ -1041,6 +1050,7 @@ var NotionTestEnvironment_ = (function () {
         verified[key] = result;
         if (verified.minutes && verified.tasks && normalize(verified.minutes.sourceId) === normalize(verified.tasks.sourceId)) throw new Error('テスト用2DBのデータソースが同一です。');
       }
+      if (purpose==='review' && key && typeof ReviewCache_ !== 'undefined') ReviewCache_.put(cacheKey,result,120);
       return result;
     }
     function discoverInbox() {
@@ -1058,18 +1068,33 @@ var NotionTestEnvironment_ = (function () {
     function project(id) {
       var page = request('get', 'pages/' + encodeURIComponent(id), null, [400, 403, 404]);
       if (!page || page.archived || page.in_trash || !page.parent || !verified.tasks) return null;
-      return page.parent.type === 'data_source_id' && normalize(page.parent.data_source_id) === normalize(verified.tasks.sourceId) ||
-        page.parent.type === 'database_id' && normalize(page.parent.database_id) === normalize(ids.tasks) ? page.id : null;
+      var belongs=page.parent.type === 'data_source_id' && normalize(page.parent.data_source_id) === normalize(verified.tasks.sourceId) || page.parent.type === 'database_id' && normalize(page.parent.database_id) === normalize(ids.tasks);
+      if(!belongs) return null;
+      verifiedProjectInfo[id]={id:page.id,domains:((((page.properties || {})['事業部領域'] || {}).multi_select) || []).map(function(o){return o.name;})};
+      return page.id;
     }
-    function verifyMinutesPage(id, allowArchived) {
+    function verifyMinutesPage(id) {
       var page = request('get', 'pages/' + encodeURIComponent(id));
-      if (!verified.minutes || ((page.archived || page.in_trash) && !(purpose === 'review' && allowArchived)) || !page.parent || !(page.parent.type === 'data_source_id' && normalize(page.parent.data_source_id) === normalize(verified.minutes.sourceId) || page.parent.type === 'database_id' && normalize(page.parent.database_id) === normalize(ids.minutes))) throw new Error('記録済みページがテスト議事録DBに属していません。');
+      if (!verified.minutes || (page.archived || page.in_trash) || !page.parent || !(page.parent.type === 'data_source_id' && normalize(page.parent.data_source_id) === normalize(verified.minutes.sourceId) || page.parent.type === 'database_id' && normalize(page.parent.database_id) === normalize(ids.minutes))) throw new Error('記録済みページがテスト議事録DBに属していません。');
       allowedPages.add(normalize(page.id)); return page;
     }
-    function updateReviewPage(id, props, archive) {
-      if (purpose !== 'review') throw new Error('確認画面専用です。');
-      verifyMinutesPage(id, archive);
-      return request('patch', 'pages/' + id, archive ? { archived: true } : { properties: props });
+    function updateReviewPage(id, props) {
+      if (!['review','review-setup'].includes(purpose)) throw new Error('確認画面専用です。');
+      if (arguments.length>2 || !props || Object.keys(props).some(function(k){return !['議事録名','事業部領域','関連するプロジェクト','確認状態'].includes(k);})) throw new Error('状態を含むプロパティ更新だけを許可します。ゴミ箱は使用できません。');
+      if (!allowedPages.has(normalize(id))) verifyMinutesPage(id);
+      return request('patch', 'pages/' + id, { properties: props });
+    }
+    function prepareReviewStatus() {
+      if (purpose!=='review-setup' || !verified.minutes) throw new Error('テスト議事録DBの準備専用です。');
+      var plan=ReviewPlan_.statusSchema(verified.minutes.properties['確認状態']);
+      console.log('確認状態の追加予定: '+JSON.stringify(plan.added));
+      if (!plan.changed || dryRun==='true') return plan;
+      var body={properties:{'確認状態':{type:'select',select:{options:plan.options}}}};
+      statusPatch={path:'data_sources/'+verified.minutes.sourceId,body:JSON.stringify(body)};
+      request('patch',statusPatch.path,body);statusPatch=null;
+      verified.minutes.properties['確認状態']={type:'select',select:{options:plan.options}};
+      if (typeof ReviewCache_ !== 'undefined') ReviewCache_.remove('schema:'+normalize(ids.minutes));
+      return plan;
     }
     function projects() {
       if (!verified.tasks) throw new Error('テストDBを確認してください。');
@@ -1102,7 +1127,7 @@ var NotionTestEnvironment_ = (function () {
     }
     return { properties: properties, dryRun: dryRun === 'true', schema: schema, inbox: discoverInbox, project: project, createPage: createPage,
       verifyMinutesPage: verifyMinutesPage, appendBlocks: appendBlocks, addInboxOptions: addInboxOptions,
-      updateReviewPage: updateReviewPage, projects: projects,
+      updateReviewPage: updateReviewPage, prepareReviewStatus: prepareReviewStatus, projectDetails:function(id){return verifiedProjectInfo[id] || null;}, projects: projects,
       ids: { minutes: ids.minutes, tasks: ids.tasks } };
   }
   return { open: open, normalize: normalize };
@@ -1141,9 +1166,9 @@ var Review_ = (function () {
     var email = ReviewSecurity_.active(), props = PropertiesService.getScriptProperties();
     if (props.getProperty('REVIEW_MASTER_ACCESS') !== 'true' && email !== ReviewSecurity_.finance) throw new Error('テスト中の利用者はfinance@だけです。');
     var c = Stage2Drive_.config(), drive = Stage2Drive_.open(c); drive.within(c.LEDGER_SPREADSHEET_ID);
-    var ledger = Stage2Ledger_.open(SpreadsheetApp.openById(c.LEDGER_SPREADSHEET_ID)), masters = ledger.masters();
+    var ledger = Stage2Ledger_.open(SpreadsheetApp.openById(c.LEDGER_SPREADSHEET_ID), true), masters = ledger.masters();
     var user = ReviewSecurity_.actor(email, masters.people, ledger.rows('settings'), props.getProperty('REVIEW_MASTER_ACCESS'));
-    return { c: c, drive: drive, ledger: ledger, masters: masters, user: user, props: props };
+    return { sources: {}, c: c, drive: drive, ledger: ledger, masters: masters, user: user, props: props };
   }
   function row(c, key) {
     var rows = c.ledger.rows('minutes').filter(function (r) { return r.meeting_key === key; });
@@ -1163,18 +1188,35 @@ var Review_ = (function () {
     return { total: rows.length, rows: rows.slice(offset, offset + 50).map(function (r) { var o = safe(r); o.taskCount = proposals(c, r); return o; }), offset: offset };
   }
   function localDate(value) { var ms=Date.parse(value); return Number.isFinite(ms) ? new Date(ms+9*3600000).toISOString().slice(0,10) : ''; }
-  function source(c, r) { var steps = json(r.step_done_json, {}); try { return steps.jsonId ? c.drive.readJSON(steps.jsonId) : {}; } catch(e) { return {summary:{error:'元の判定JSONを読み取れません。再実行前に管理者が確認してください。'}}; } }
-  function proposals(c, r) { var j = source(c, r); return (j.task_proposals || []).length; }
-  function notion() { var env = NotionTestEnvironment_.open(true, 'review'); env.minutesSchema = env.schema(env.ids.minutes, 'minutes'); env.schema(env.ids.tasks, 'tasks'); return env; }
-  function detail(c, key) {
+  function source(c, r) {
+    var steps=json(r.step_done_json,{}), display=steps.reviewDisplay;
+    if (display && display.jsonId===steps.jsonId && display.hash===steps.hash) return display;
+    if (c.sources[r.meeting_key]) return c.sources[r.meeting_key];
+    var key='json:'+c.c.FOLDER_SYSTEM_TEST_ID+':'+steps.jsonId+':'+(steps.hash||''), cached=ReviewCache_.get(key);
+    if (cached) return c.sources[r.meeting_key]=cached;
+    try {
+      var j=steps.jsonId ? c.drive.readJSON(steps.jsonId) : {}, value={summary:j.summary||{},taskCount:(j.task_proposals||[]).length};
+      if(steps.jsonId) ReviewCache_.put(key,value,120);
+      return c.sources[r.meeting_key]=value;
+    } catch(e) { return {summary:{error:'元の判定JSONを読み取れません。再実行前に管理者が確認してください。'},taskCount:0}; }
+  }
+  function proposals(c,r) { return source(c,r).taskCount || 0; }
+  function notion(readOnly, needTasks) {
+    var env=NotionTestEnvironment_.open(true,'review');
+    env.minutesSchema=env.schema(env.ids.minutes,'minutes',!!readOnly);
+    if(needTasks) env.schema(env.ids.tasks,'tasks',!!readOnly);
+    return env;
+  }
+  function detail(c, key, compact) {
     var r = row(c, key), out = safe(r), j = source(c, r), steps = json(r.step_done_json, {});
     out.attendees = json(r.attendees_json, []).map(function (a) { var address = typeof a === 'string' ? a : a.email; return { email: address, internal: MeetingRules_.classify([{email:address}], c.masters).scope === '社内' }; });
-    out.summary = j.summary || {}; out.taskCount = (j.task_proposals || []).length; out.links = [];
+    out.summary = j.summary || {}; out.taskCount = j.taskCount || 0; out.links = [];
     var raw=json(r.raw_file_ids_json,{}), fileLinks=[['会議フォルダ',r.meeting_folder_id],['議事録',r.minutes_doc_id]];
     [['recording','録画'],['transcript','文字起こし'],['gemini','Geminiメモ']].forEach(function(pair){if (raw[pair[0]]) fileLinks.push([pair[1],raw[pair[0]]]);});
     out.fileStatus={recording:raw.recording?'あり':'なし',transcript:raw.transcript?'あり':'なし',gemini:raw.gemini?'あり':'なし'};
-    fileLinks.forEach(function (pair) { if (pair[1]) { c.drive.within(pair[1]); out.links.push({ title: pair[0], url: 'https://drive.google.com/open?id=' + encodeURIComponent(pair[1]) }); } });
-    if (r.notion_page_id) { notion().verifyMinutesPage(r.notion_page_id, r.status === '対象外' || !!(steps.review && steps.review.plan.archive)); out.links.push({ title: 'Notion', url: 'https://www.notion.so/' + r.notion_page_id.replace(/-/g,'') }); }
+    var children=!compact && r.meeting_folder_id ? c.drive.children(r.meeting_folder_id).map(function(f){return f.id;}) : null;
+    fileLinks.forEach(function (pair) { if (pair[1]) { if (!compact && pair[1]!==r.meeting_folder_id && children && !children.includes(pair[1])) return; out.links.push({ title: pair[0], url: 'https://drive.google.com/open?id=' + encodeURIComponent(pair[1]) }); } });
+    if (r.notion_page_id && /^[0-9a-f-]{32,36}$/i.test(r.notion_page_id)) { out.links.push({ title: 'Notion', url: 'https://www.notion.so/' + r.notion_page_id.replace(/-/g,'') }); }
     out.history = c.ledger.rows('change_log').filter(function (h) { return h.meeting_key === key; }).slice(-30).map(function (h) { return { at: String(h.at), actor: h.actor, action: h.kind, before: h.before_json, after: h.after_json, result: h.result }; });
     out.pending = steps.review ? { state: steps.review.state, action: steps.review.plan.action, drive: !!steps.review.drive, notion: !!steps.review.notion, chatwork: !!steps.review.chatwork } : null;
     return out;
@@ -1182,13 +1224,15 @@ var Review_ = (function () {
   function choices(c) {
     var folders = c.masters.folders.filter(function (f) { return c.user.admin || (!f.rank || c.user.ranks.includes(String(f.rank))); }).map(function (f) { return f.placement; });
     // プロジェクト候補も所属確認を行います。非管理者には領域の確認できない候補を公開しません。
-    var projects = [];
-    {
+    var projectKey='projects:'+c.c.FOLDER_SYSTEM_TEST_ID+':'+c.c.NOTION_DB_TASKS_TEST+':'+(c.user.admin?'admin':'reviewer'), cached=ReviewCache_.get(projectKey);
+    var projects = cached || [];
+    if (!cached) {
       var ref = c.drive.folder(c.drive.root.id, 'ref', false), files = c.drive.children(ref.id).filter(function (f) { return f.name === 'projects.json'; });
       if (files.length > 1) throw new Error('projects.jsonが重複しています。');
-      var env = notion();
+      var env=NotionTestEnvironment_.open(true,'review'); env.schema(env.ids.tasks,'tasks',true);
       if (files.length && c.user.admin) { var data = c.drive.readJSON(files[0].id); var candidates = Array.isArray(data) ? data : data.projects || []; candidates.slice(0,500).forEach(function (p) { if (p.id && env.project(p.id)) projects.push({ id: p.id, domains: ReviewSecurity_.list(p.domains), title: String(p.title || p.name || p.id) }); }); }
       else projects = env.projects();
+      ReviewCache_.put(projectKey,projects,120);
     }
     projects = projects.filter(function (p) { return projectVisible(c,p); }).map(function (p) { return {id:p.id,title:p.title}; });
     return { folders: folders, projects: projects };
@@ -1201,7 +1245,7 @@ var Review_ = (function () {
     });
   }
   function destination(c, r, plan, create) {
-    if (plan.archive) return c.drive.folder(c.drive.root.id, '99_対象外', false).id;
+    if (plan.exclude) return c.drive.folder(c.drive.root.id, '99_対象外', false).id;
     if (!plan.updateProperties) return r.folder_id_final;
     if (plan.newClient) {
       if (!c.user.admin) throw new Error('新規顧客の再実行も管理者専用です。');
@@ -1248,7 +1292,7 @@ var Review_ = (function () {
       var c = context(); ReviewSecurity_.verifyNonce(c.user, request.nonce);
       var r = row(c, request.meetingKey);
       if (!Number.isInteger(request.version) || Number(r.version) !== request.version) throw new Error('先に更新されました。画面を読み込み直してください。');
-      var steps = json(r.step_done_json, {}), journal = steps.review, retry = request.action === 'retry';
+      var steps = json(r.step_done_json, {}), journal = ReviewPlan_.migrateJournal(steps.review), retry = request.action === 'retry';
       if (retry && r.status !== '要対応') throw new Error('再実行は要対応のときだけです。');
       if (retry && !journal) {
         if (!c.user.admin) throw new Error('取り込みの再実行は管理者専用です。');
@@ -1257,43 +1301,58 @@ var Review_ = (function () {
       }
       if (!retry && journal && journal.state !== 'done') throw new Error('未完了の処理を再実行してください。');
       if (!retry) journal = { id: Utilities.getUuid(), actor: c.user.email, plan: ReviewPlan_.plan(r,request,c.masters,c.user,new Date().toISOString()), state:'running' };
-      var env = notion(), plan = journal.plan, desired = Object.assign({},r,plan.desired), verified = [];
-      env.verifyMinutesPage(r.notion_page_id, plan.archive);
-      ReviewSecurity_.list(desired.related_project_ids_final).forEach(function (id) { var found = env.project(id); if (found) verified.push(id); });
-      if (!c.user.admin) { var visible=choices(c).projects.map(function(p){return p.id;}); if (ReviewSecurity_.list(desired.related_project_ids_final).some(function(id){return !visible.includes(id);})) throw new Error('関連プロジェクトの閲覧・操作権限を確認できません。'); }
-      var payload = plan.updateProperties ? ReviewPlan_.notionProperties(desired, env.minutesSchema, verified) : null;
+      var plan=journal.plan, desired=Object.assign({},r,plan.desired), projectIds=ReviewSecurity_.list(desired.related_project_ids_final), env=notion(false,plan.updateProperties && projectIds.length>0), verified=[];
+      env.verifyMinutesPage(r.notion_page_id);
+      (plan.updateProperties ? projectIds : []).forEach(function (id) { var found = env.project(id); if (found) verified.push(id); });
+      if (!c.user.admin && plan.updateProperties && projectIds.some(function(id){var info=env.projectDetails(id);return !info || !projectVisible(c,info);})) throw new Error('関連プロジェクトの閲覧・操作権限を確認できません。');
+      var payload = plan.updateProperties ? ReviewPlan_.notionProperties(desired, env.minutesSchema, verified) : ReviewPlan_.statusProperties(desired.status,env.minutesSchema);
       var dest = destination(c,r,plan,false); var meetingFolder = c.drive.within(r.meeting_folder_id);
-      if (journal.drive && (plan.archive || plan.updateProperties) && !(meetingFolder.parents || []).includes(plan.desired.folder_id_final)) throw new Error('処理記録と現在の格納先が異なります。管理者が確認してください。');
-      if (c.c.DRY_RUN === 'true') { log(c,'確認画面の反映予定',r,JSON.stringify({plan:plan,destination:dest,properties:payload})); chat(c,r,journal,function(){},true); return { message:'予定をdry_run_logに記録しました。議事録は変更していません。' }; }
+      if (journal.drive && (plan.exclude || plan.updateProperties) && !(meetingFolder.parents || []).includes(plan.desired.folder_id_final)) throw new Error('処理記録と現在の格納先が異なります。管理者が確認してください。');
+      if (c.c.DRY_RUN === 'true') { log(c,'確認画面の反映予定',r,JSON.stringify({plan:plan,destination:dest,properties:payload})); chat(c,r,journal,function(){},true); return { message:'予定をdry_run_logに記録しました。議事録は変更していません。',row:detail(c,r.meeting_key,true),dryRun:true }; }
+      function result(message,failed) { return {message:message,failed:!!failed,dryRun:c.c.DRY_RUN==='true',version:Number(r.version),removedKey:r.meeting_key,row:ReviewSecurity_.canView(c.user,r,c.masters)?detail(c,r.meeting_key,true):null}; }
       function save() { steps.review=journal; r.step_done_json=JSON.stringify(steps); c.ledger.save(r); }
       function fail(step) { if (c.user.email === ReviewSecurity_.finance && c.props.getProperty('REVIEW_TEST_FAIL_STEP') === step) { c.props.deleteProperty('REVIEW_TEST_FAIL_STEP'); throw new Error('再実行確認用に停止しました（'+step+'）。'); } }
       journal.state='running'; save();
       try {
         if (!journal.drive) {
           dest=destination(c,r,plan,true);
-          if (plan.updateProperties || plan.archive) { var file=c.drive.within(r.meeting_folder_id); if (!(file.parents || []).includes(dest)) c.drive.move(r.meeting_folder_id,dest,'meeting_folder',r.meeting_key); plan.desired.folder_id_final=dest; if (plan.archive) plan.desired.placement_final='99_対象外'; }
+          if (plan.updateProperties || plan.exclude) { var file=c.drive.within(r.meeting_folder_id); if (!(file.parents || []).includes(dest)) c.drive.move(r.meeting_folder_id,dest,'meeting_folder',r.meeting_key); plan.desired.folder_id_final=dest; if (plan.exclude) plan.desired.placement_final='99_対象外'; }
           journal.drive=true; save(); fail('after_drive');
         }
-        if (!journal.notion) { if (plan.archive || plan.updateProperties) env.updateReviewPage(r.notion_page_id,payload,plan.archive); journal.notion=true; save(); fail('after_notion'); }
+        if (!journal.notion) { env.updateReviewPage(r.notion_page_id,payload); journal.notion=true; save(); fail('after_notion'); }
         if (!journal.chatwork) { chat(c,r,journal,save,false); journal.chatwork=true; save(); fail('after_chatwork'); }
         var changeId='review:'+journal.id;
         if (!c.ledger.rows('change_log').some(function(h){return h.change_id===changeId;})) c.ledger.append('change_log',{change_id:changeId,at:new Date().toISOString(),meeting_key:r.meeting_key,kind:plan.action,target:'議事録',before_json:JSON.stringify(plan.before),after_json:JSON.stringify(plan.desired),actor:journal.actor,result:'成功'});
-        Object.assign(r,plan.desired); if (plan.archive) r.notion_status='アーカイブ済み'; r.last_error=''; journal.state='done'; save();
-        return {message:'反映しました。',version:Number(r.version)};
-      } catch(e) { journal.state='failed'; r.status='要対応'; var error=String(e.message || '不明なエラー'); [c.c.NOTION_TOKEN,c.c.CHATWORK_TOKEN].filter(Boolean).forEach(function(secret){error=error.split(secret).join('[非表示]');}); r.last_error=error; save(); return {message:'処理を停止しました。'+error+' 「再実行」で続きから再開できます。',failed:true}; }
+        Object.assign(r,plan.desired); r.notion_status='反映済み（'+plan.desired.status+'）'; r.last_error=''; journal.state='done'; save();
+        return result('反映しました。',false);
+      } catch(e) { journal.state='failed'; r.status='要対応'; var error=String(e.message || '不明なエラー'); [c.c.NOTION_TOKEN,c.c.CHATWORK_TOKEN].filter(Boolean).forEach(function(secret){error=error.split(secret).join('[非表示]');}); r.last_error=error; save(); return result('処理を停止しました。'+error+' 「再実行」で続きから再開できます。',true); }
     });
   }
-  return {context:context,list:list,detail:detail,choices:choices,submit:submit};
+  return {context:context,list:list,detail:detail,source:source,choices:choices,submit:submit};
 })();
 function doGet() {
-  try { Review_.context(); return HtmlService.createTemplateFromFile('Index').evaluate().setTitle('議事録の確認'); }
-  catch(e) { return HtmlService.createHtmlOutput('この確認画面を開く権限がないか、設定が未完了です。finance@でログインし、管理者に確認してください。'); }
+  try {
+    var email=ReviewSecurity_.active();
+    if(PropertiesService.getScriptProperties().getProperty('REVIEW_MASTER_ACCESS')!=='true' && email!==ReviewSecurity_.finance) throw new Error('権限がありません。');
+    return HtmlService.createTemplateFromFile('Index').evaluate().setTitle('議事録の確認');
+  } catch(e) { return HtmlService.createHtmlOutput('この確認画面を開く権限がないか、設定が未完了です。finance@でログインし、管理者に確認してください。'); }
 }
 function includeReview_(name) { if (!['Styles','Scripts'].includes(name)) throw new Error('不正な画面部品です。'); return HtmlService.createHtmlOutputFromFile(name).getContent(); }
-function reviewBootstrap() { var c=Review_.context(); return {actor:c.user.email,admin:c.user.admin,dryRun:c.c.DRY_RUN==='true',nonce:ReviewSecurity_.nonce(c.user),choices:Review_.choices(c),list:Review_.list(c,{})}; }
-function reviewList(filters) { var c=Review_.context(); return Review_.list(c,filters); }
-function reviewDetail(key) { var c=Review_.context(); return Review_.detail(c,key); }
-function reviewSubmit(request) { return Review_.submit(request); }
+function reviewTimed_(label,fn) { var start=Date.now();try{return fn();}finally{console.log('確認画面 '+label+'：'+(Date.now()-start)+'ms');} }
+function reviewBootstrap() { return reviewTimed_('初期表示',function(){ var c=Review_.context(); return {actor:c.user.email,admin:c.user.admin,dryRun:c.c.DRY_RUN==='true',nonce:ReviewSecurity_.nonce(c.user),choices:Review_.choices(c),list:Review_.list(c,{})}; }); }
+function reviewList(filters) { return reviewTimed_('一覧',function(){ var c=Review_.context(); return Review_.list(c,filters); }); }
+function reviewDetail(key) { return reviewTimed_('詳細',function(){ var c=Review_.context(); return Review_.detail(c,key); }); }
+function reviewSubmit(request) { return reviewTimed_('操作',function(){ return Review_.submit(request); }); }
+
+
+// reviewCache.js
+// 権限・version・更新対象の所属はキャッシュしません。表示データだけ短時間再利用します。
+var ReviewCache_ = (function () {
+  function get(key) { try { var value=CacheService.getScriptCache().get('rv2:'+key); return value ? JSON.parse(value) : null; } catch(e) { return null; } }
+  function put(key,value,seconds) { try { var text=JSON.stringify(value); if(text.length<24000) CacheService.getScriptCache().put('rv2:'+key,text,seconds||120); } catch(e) {} return value; }
+  function remove(key) { try { CacheService.getScriptCache().remove('rv2:'+key); } catch(e) {} }
+  return {get:get,put:put,remove:remove};
+})();
 
 
 // reviewPlan.js
@@ -1337,7 +1396,28 @@ var ReviewPlan_ = (function () {
       next.status = changed || row.status === '確定・修正あり' ? '確定・修正あり' : '確定'; next.confirmed_by = user.email; next.confirmed_at = now;
     } else next.status = request.action === 'hold' ? '保留' : '対象外';
     return { action: request.action, before: snapshot(row), desired: next, newClient: newClient, changed: changed,
-      reconfirmed: confirm && ['確定', '確定・修正あり'].includes(row.status) && changed, archive: request.action === 'exclude', updateProperties: confirm };
+      reconfirmed: confirm && ['確定', '確定・修正あり'].includes(row.status) && changed, exclude: request.action === 'exclude', updateProperties: confirm };
+  }
+  var states = ['確認待ち','仕分け待ち','確定','確定・修正あり','保留','対象外','対象外（Meet優先）','要対応'];
+  function statusSchema(property) {
+    if (property && property.type!=='select') throw new Error('確認状態はselect型にしてください。既存項目は変更しません。');
+    var options=property ? property.select.options || [] : [], added=states.filter(function(name){return !options.some(function(o){return o.name===name;});});
+    return {changed:!property || added.length>0, added:added, options:options.concat(added.map(function(name){return {name:name};}))};
+  }
+  function statusProperties(status,schema) {
+    var p=schema.properties['確認状態'];
+    if (!states.includes(status) || !p || p.type!=='select' || !(p.select.options || []).some(function(o){return o.name===status;})) throw new Error('確認状態が未準備です。setupReviewNotionStatusを実行してください。');
+    return {'確認状態':{select:{name:status}}};
+  }
+  function migrateJournal(journal) {
+    if (!journal) return journal;
+    var p=journal.plan;
+    if (Object.prototype.hasOwnProperty.call(p,'archive')) {
+      p.exclude=!!p.archive; delete p.archive;
+      // 旧版でゴミ箱処理を完了した記録でも、再開時は状態を改めて反映します。
+      if (journal.state!=='done') journal.notion=false;
+    }
+    return journal;
   }
   function notionProperties(row, schema, projectIds) {
     var p = schema.properties, selected = arrays(row.domains_final), ids = arrays(row.related_project_ids_final);
@@ -1345,7 +1425,7 @@ var ReviewPlan_ = (function () {
     var options = (p['事業部領域'].multi_select.options || []).map(function (o) { return o.name; });
     if (selected.some(function (name) { return !domains.includes(name) || !options.includes(name); })) throw new Error('Notionに存在しない事業部領域は送信できません。');
     if (ids.some(function (id) { return !projectIds.includes(id); })) throw new Error('テスト用タスクDBに存在しない関連プロジェクトです。');
-    return { '議事録名': { title: [{ type: 'text', text: { content: row.minutes_title } }] }, '事業部領域': { multi_select: selected.map(function (name) { return { name: name }; }) }, '関連するプロジェクト': { relation: ids.map(function (id) { return { id: id }; }) } };
+    return Object.assign(statusProperties(row.status,schema), { '議事録名': { title: [{ type: 'text', text: { content: row.minutes_title } }] }, '事業部領域': { multi_select: selected.map(function (name) { return { name: name }; }) }, '関連するプロジェクト': { relation: ids.map(function (id) { return { id: id }; }) } });
   }
   function reply(plan) {
     return '確定後の修正内容\n' + ['scope_final', 'placement_final', 'domains_final', 'related_project_ids_final', 'minutes_title'].filter(function (k) { return plan.before[k] !== plan.desired[k]; }).map(function (k) {
@@ -1353,7 +1433,7 @@ var ReviewPlan_ = (function () {
       return names[k] + '：' + String(plan.before[k] || '未設定') + ' → ' + String(plan.desired[k] || '未設定');
     }).join('\n');
   }
-  return { plan: plan, snapshot: snapshot, notionProperties: notionProperties, reply: reply };
+  return { statusSchema:statusSchema,statusProperties:statusProperties,migrateJournal:migrateJournal,plan: plan, snapshot: snapshot, notionProperties: notionProperties, reply: reply };
 })();
 
 
@@ -1411,6 +1491,45 @@ function setupReviewAccess() {
     var properties = PropertiesService.getScriptProperties();
     if (!properties.getProperty('REVIEW_MASTER_ACCESS')) properties.setProperty('REVIEW_MASTER_ACCESS', 'false');
     console.log('確認画面のマスタを準備しました。既存の役割・メール対応は上書きしていません。');
+  });
+}
+
+
+// reviewSetup.js
+// 既存テスト3件にも状態を反映します。本番DB・ゴミ箱・ページ本文は変更しません。
+function setupReviewNotionStatus() {
+  assertFinanceOperator_();
+  return Ledger_.withLock(function () {
+    var c=Review_.context(), env=NotionTestEnvironment_.open(true,'review-setup');
+    var schema=env.schema(env.ids.minutes,'minutes'), statePlan=ReviewPlan_.statusSchema(schema.properties['確認状態']);
+    var plannedSchema={properties:Object.assign({},schema.properties,{'確認状態':{type:'select',select:{options:statePlan.options}}})};
+    var rows=c.ledger.rows('minutes').filter(function(r){return !!r.notion_page_id;}), seen=new Set();
+    // 全件を先に検証し、本番ページや未復元ページが混じっていたら準備を開始しません。
+    rows.forEach(function(r){
+      var pageKey=NotionTestEnvironment_.normalize(r.notion_page_id);
+      if(seen.has(pageKey)) throw new Error('NotionページIDが台帳で重複しています。先に確認してください。');
+      seen.add(pageKey); ReviewPlan_.statusProperties(r.status,plannedSchema);
+      env.verifyMinutesPage(r.notion_page_id);
+    });
+    env.prepareReviewStatus();
+    rows.forEach(function(r){
+      var props=ReviewPlan_.statusProperties(r.status,plannedSchema);
+      console.log(r.display_id+'：確認状態を「'+r.status+'」にする予定です。');
+      c.ledger.log('Notion確認状態の準備予定',r.meeting_key,JSON.stringify(props));
+      if(c.c.DRY_RUN==='true') return;
+      // ページ更新は同じ状態への上書きです。途中失敗しても再実行できます。
+      env.updateReviewPage(r.notion_page_id,props);
+      var steps=r.step_done_json ? JSON.parse(r.step_done_json) : {};
+      steps.review=ReviewPlan_.migrateJournal(steps.review);
+      if(!steps.review) delete steps.review;
+      var display=Review_.source(c,r);
+      var snapshot={jsonId:steps.jsonId,hash:steps.hash,summary:display.summary,taskCount:display.taskCount||0};
+      if(!display.summary.error && JSON.stringify(snapshot).length<12000) steps.reviewDisplay=snapshot;
+      r.step_done_json=JSON.stringify(steps);r.notion_status='反映済み（'+r.status+'）';c.ledger.save(r);
+    });
+    ReviewCache_.remove('schema:'+NotionTestEnvironment_.normalize(env.ids.minutes));
+    console.log(c.c.DRY_RUN==='true'?'予定確認のみです。次はDRY_RUN=falseで同じ関数を実行してください。':'確認状態と既存ページを準備しました。DRY_RUN=trueへ戻してください。');
+    return {dryRun:c.c.DRY_RUN==='true',pages:rows.length,added:statePlan.added};
   });
 }
 
@@ -1730,24 +1849,26 @@ var Stage2Drive_ = (function () {
   }
   function open(c) {
     if (c.ENV !== 'test' || !c.TEST_ENV_KEY || !c.FOLDER_SYSTEM_TEST_ID) throw new Error('共有ドライブはsetupSharedTestWorkspace、マイドライブはsetupTestWorkspaceで準備してください。');
-    var root = meta(c.FOLDER_SYSTEM_TEST_ID);
+    var metadata = {};
+    function readMeta(id) { return metadata[id] || (metadata[id] = meta(id)); }
+    var root = readMeta(c.FOLDER_SYSTEM_TEST_ID);
     function marker(m, kind) { return m.appProperties && m.appProperties.minutes_test_env === c.TEST_ENV_KEY && (!kind || m.appProperties.kind === kind); }
     if (root.trashed || root.mimeType !== folderMime || root.name !== '_test' || !marker(root, 'test_root')) throw new Error('初期化済みテストルートではありません。');
     if (c.SHARED_DRIVE_ID ? root.driveId !== c.SHARED_DRIVE_ID : root.driveId || !root.ownedByMe) throw new Error('テストDriveの所属が違います。');
-    var system = root.parents && root.parents.length === 1 && meta(root.parents[0]);
+    var system = root.parents && root.parents.length === 1 && readMeta(root.parents[0]);
     if (!system || system.name !== '_system' || system.trashed || system.mimeType && system.mimeType !== folderMime) throw new Error('_system/_testではありません。');
     if (c.SHARED_DRIVE_ID) {
       // _systemは本番領域でもあるため目印を要求・追加せず、所属だけを検証します。
       if (system.driveId !== c.SHARED_DRIVE_ID || !system.parents || system.parents.length !== 1 || system.parents[0] !== c.SHARED_DRIVE_ID || c.FOLDER_SYSTEM_ID && system.id !== c.FOLDER_SYSTEM_ID) throw new Error('_systemが指定共有ドライブ直下にありません。');
     } else if (!marker(system, 'system')) throw new Error('マイドライブの_systemマーカーが不正です。');
     function within(id) {
-      var file = meta(id), cursor = file, visited = new Set();
+      var file = readMeta(id), cursor = file, visited = new Set();
       for (var depth = 0; depth < 30; depth++) {
         if (cursor.trashed || cursor.mimeType === 'application/vnd.google-apps.shortcut') throw new Error('削除済みファイル・ショートカットは処理できません。');
         if (c.SHARED_DRIVE_ID && cursor.driveId !== c.SHARED_DRIVE_ID) throw new Error('指定共有ドライブ外のファイルです。');
         if (cursor.id === root.id) return file;
         if (!cursor.parents || cursor.parents.length !== 1 || visited.has(cursor.id)) break;
-        visited.add(cursor.id); cursor = cursor.parents[0] === root.id ? root : meta(cursor.parents[0]);
+        visited.add(cursor.id); cursor = cursor.parents[0] === root.id ? root : readMeta(cursor.parents[0]);
       }
       throw new Error('テストルート外のファイル操作は禁止です。');
     }
@@ -1769,7 +1890,7 @@ var Stage2Drive_ = (function () {
       if (kind) app.kind = kind; if (meetingKey) app.meeting_key = meetingKey;
       var args = { supportsAllDrives: true, fields: 'id,name,parents' };
       if (!(m.parents || []).includes(destination)) { args.addParents = destination; args.removeParents = (m.parents || []).join(','); }
-      return Drive.Files.update({ appProperties: app }, id, null, args);
+      var result=Drive.Files.update({ appProperties: app }, id, null, args); delete metadata[id]; return result;
     }
     function createFile(parent, name, content, mime, kind, meetingKey) {
       write(); within(parent);
@@ -1916,21 +2037,32 @@ var Stage2Ledger_ = (function () {
       if (!sheet.getLastRow()) sheet.appendRow(p.headers);
     });
   }
-  function open(book) {
-    Ledger_.plan(book).forEach(function (p) { if (p.action !== '変更なし') throw new Error('台帳が未初期化です。setupTestWorkspaceを実行してください。'); });
+  function open(book, fast) {
+    var snapshots = {};
+    if (!fast) Ledger_.plan(book).forEach(function (p) { if (p.action !== '変更なし') throw new Error('台帳が未初期化です。setupTestWorkspaceを実行してください。'); });
     function rows(name) {
+      if (fast && snapshots[name]) return snapshots[name];
       var sheet = book.getSheetByName(name), headers = Ledger_.headers[name].split(',');
+      if (!sheet || !sheet.getLastRow()) throw new Error('台帳が未初期化です: ' + name);
+      if (fast) {
+        var values=sheet.getRange(1,1,sheet.getLastRow(),Math.max(headers.length,sheet.getLastColumn())).getValues();
+        if (JSON.stringify(values[0])!==JSON.stringify(headers)) throw new Error(name+' の見出しが仕様と異なります。上書きしません。');
+        snapshots[name]=values.slice(1).map(function(values,i){var r={_row:i+2};headers.forEach(function(h,j){r[h]=values[j];});return r;}); return snapshots[name];
+      }
       return sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues().map(function (values, i) {
         var r = { _row: i + 2 }; headers.forEach(function (h, j) { r[h] = values[j]; }); return r;
       });
     }
     function append(name, data) {
+      if (fast) rows(name);
       var sheet = book.getSheetByName(name), values = Ledger_.headers[name].split(',').map(function (h) { return text(data[h]); });
-      sheet.appendRow(values); data._row = sheet.getLastRow(); return data;
+      sheet.appendRow(values); data._row = sheet.getLastRow(); if (fast && snapshots[name]) snapshots[name].push(data); return data;
     }
     function save(row) {
       row.version = Number(row.version || 0) + 1; row.updated_at = new Date().toISOString();
       if (!row._row) return append('minutes', row);
+      if (fast) rows('minutes');
+      if (fast) snapshots.minutes = snapshots.minutes.map(function(r){return r._row===row._row ? row : r;});
       var headers = Ledger_.headers.minutes.split(',');
       book.getSheetByName('minutes').getRange(row._row, 1, 1, headers.length).setValues([headers.map(function (h) { return text(row[h]); })]);
       return row;

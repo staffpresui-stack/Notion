@@ -17,7 +17,8 @@ var NotionFixturePlan_ = (function () {
       if (!p || !wanted[name].includes(p.type)) differences.push({ kind: optionalBody ? '本文での提供可・要確認' : '項目名・型', name: name, expected: wanted[name], actual: p ? p.type : '未設定' });
     });
     Object.keys(properties).filter(function (name) { return !wanted[name] && !(key === 'inbox' && properties[name].type === 'title'); }).forEach(function (name) {
-      if (key === 'tasks' && ['関連プロジェクト（参照元）', 'サブアイテム', '関連プロジェクト'].includes(name)) knownAdditions.push({ name: name, type: properties[name].type });
+      if (key === 'minutes' && name==='確認状態') knownAdditions.push({name:name,type:properties[name].type});
+      else if (key === 'tasks' && ['関連プロジェクト（参照元）', 'サブアイテム', '関連プロジェクト'].includes(name)) knownAdditions.push({ name: name, type: properties[name].type });
       else differences.push({ kind: '追加項目', name: name, actual: properties[name].type });
     });
     if (key === 'inbox' && !Object.keys(properties).some(function (n) { return properties[n].type === 'title'; })) differences.push({ kind: '項目名・型', name: 'タイトル', expected: ['title'], actual: '未設定' });
@@ -66,6 +67,8 @@ var NotionFixturePlan_ = (function () {
       '事業部領域': { multi_select: selected.map(function (name) { return { name: name }; }) },
       '関連するプロジェクト': { relation: placement.related_project_ids.map(function (id) { return { id: id }; }) }
     };
+    var state=minutes.properties['確認状態'];
+    if(state && state.type==='select' && (state.select.options||[]).some(function(o){return o.name===placement.status;})) properties['確認状態']={select:{name:placement.status}};
     var children = [block('heading_2', '基本情報'), block('paragraph', '日時：' + manifest.start),
       block('paragraph', '参加者：' + participants.map(function (a) { return a.name || a.email || '要確認'; }).join('、')),
       block('paragraph', '記録元：' + (manifest.source === 'meet' ? 'Meet' : 'tl;dv')),

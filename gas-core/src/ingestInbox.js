@@ -79,6 +79,8 @@ var InboxIngest_ = (function () {
           steps = { jsonId: file.id, rawFolderId: folder.id, manifestId: manifests[0].id, hash: hash(j), contentHash: hash(blocks), modifiedTime: file.modifiedTime };
           save();
         }
+        var display={jsonId:steps.jsonId,hash:steps.hash,summary:j.summary||{},taskCount:(j.task_proposals||[]).length};
+        if(JSON.stringify(display).length<12000) steps.reviewDisplay=display; else delete steps.reviewDisplay;
         steps.error = false; row.status = plan.placement.status;
         if (!row.meeting_folder_id) {
           var name = Utilities.formatDate(new Date(manifest.start), 'Asia/Tokyo', 'yyyy-MM-dd_HHmm') + '_' + InboxPlan_.safeName(manifest.title);

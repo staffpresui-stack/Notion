@@ -55,3 +55,5 @@ GAS エディタ「プロジェクトの設定」＞「スクリプト プロパ
 - WEBAPP_URL：finance@でデプロイした /exec URL。Chatwork予定本文の確認リンクに使います。
 
 マスタ・HTMLファイル・デプロイ・試験順は docs/REVIEW_TEST.md を参照してください。
+
+段階3の修正版は新しいプロパティを追加しません。setupReviewNotionStatusでテストDBの確認状態と既存ページを準備します。更新・計測の手順は docs/REVIEW_UPDATE.md を参照してください。
