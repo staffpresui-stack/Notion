@@ -1,0 +1,14 @@
+node_modules/
+.clasp.json
+**/.clasp.json
+.clasprc.json
+**/.clasprc.json
+.env
+.env.*
+!.env.example
+*.log
+coverage/
+setup-inputs/
+*credentials*.json
+*.pem
+*.key

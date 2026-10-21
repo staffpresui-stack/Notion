@@ -1,0 +1,25 @@
+{
+  "meeting_key": "tldv:tldvtest003",
+  "source": "tldv",
+  "scope": "社外",
+  "placement": "社外/未登録株式会社（要確認）",
+  "domains": [
+    "EC"
+  ],
+  "related_project_ids": [],
+  "minutes_title": "2026-10-21 新規取引の相談",
+  "minutes_doc_id": "DOC_ID_TEST_003",
+  "minutes_markdown": null,
+  "confidence": "低",
+  "reason": "社名が文字起こしにしか出ず、顧客一覧に無い",
+  "sensitive": false,
+  "summary": {
+    "decisions": [],
+    "next_actions": []
+  },
+  "task_proposals": [],
+  "open_questions": [
+    "先方の社名の表記",
+    "参加者の氏名"
+  ]
+}

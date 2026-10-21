@@ -1,0 +1,28 @@
+{
+  "meeting_key": "meet:test002_20261021T050000Z",
+  "source": "meet",
+  "event_id": "test002_20261021T050000Z",
+  "title": "サンプル商事様 定例",
+  "start": "2026-10-21T14:00:00+09:00",
+  "end": "2026-10-21T15:00:00+09:00",
+  "organizer_email": "test.hanako@premiere-mode.co.jp",
+  "attendees": [
+    {
+      "email": "test.hanako@premiere-mode.co.jp",
+      "name": "テスト 花子"
+    },
+    {
+      "email": "yamada@sample-shoji.example",
+      "name": "山田"
+    }
+  ],
+  "meet_url": "https://meet.google.com/aaa-bbbb-ccc",
+  "files": {
+    "recording": "FILE_REC",
+    "transcript": "FILE_TR",
+    "gemini": "FILE_GM"
+  },
+  "missing": [],
+  "status": "ready",
+  "created_at": "2026-10-21T15:25:00+09:00"
+}

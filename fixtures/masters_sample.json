@@ -1,0 +1,60 @@
+{
+  "folders": [
+    {
+      "placement": "社内/事業部全体",
+      "notion_domain": null
+    },
+    {
+      "placement": "社内/セールス・マーケ",
+      "notion_domain": "セールス・マーケ"
+    },
+    {
+      "placement": "社内/EC",
+      "notion_domain": "EC"
+    },
+    {
+      "placement": "社内/生産管理",
+      "notion_domain": "生産管理"
+    },
+    {
+      "placement": "社内/経理・バックオフィス",
+      "notion_domain": "経理・バックオフィス"
+    },
+    {
+      "placement": "社内/Salesforce・AI",
+      "notion_domain": "Salesforce・AI"
+    },
+    {
+      "placement": "社内/経営",
+      "notion_domain": "経営"
+    }
+  ],
+  "clients": [
+    {
+      "client_name": "サンプル商事様",
+      "domains": [
+        "sample-shoji.example"
+      ]
+    }
+  ],
+  "internal": [
+    "premiere-mode.co.jp",
+    "test.private@gmail.com"
+  ],
+  "people": [
+    {
+      "name": "テスト 太郎",
+      "google_email": "test.taro@premiere-mode.co.jp",
+      "notion_user_id": null,
+      "chatwork_account_id": null,
+      "is_reviewer": true
+    },
+    {
+      "name": "テスト 花子",
+      "google_email": "test.hanako@premiere-mode.co.jp",
+      "notion_user_id": null,
+      "chatwork_account_id": null,
+      "is_reviewer": true
+    }
+  ]
+}

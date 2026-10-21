@@ -1,0 +1,52 @@
+{
+  "meeting_key": "meet:test002_20261021T050000Z",
+  "source": "meet",
+  "scope": "社外",
+  "placement": "社外/サンプル商事様",
+  "domains": [
+    "セールス・マーケ"
+  ],
+  "related_project_ids": [],
+  "minutes_title": "2026-10-21 サンプル商事様 定例",
+  "minutes_doc_id": "DOC_ID_TEST_002",
+  "minutes_markdown": null,
+  "confidence": "高",
+  "reason": "社外参加者のドメイン sample-shoji.example が顧客一覧のサンプル商事様と一致",
+  "sensitive": false,
+  "summary": {
+    "decisions": [
+      "次回は11月第1週に開催する"
+    ],
+    "next_actions": [
+      {
+        "who": "テスト 花子",
+        "what": "見積書を送付する",
+        "due": null
+      }
+    ]
+  },
+  "task_proposals": [
+    {
+      "type": "新規",
+      "task_db": "非プロジェクト",
+      "target_id": null,
+      "title": "サンプル商事様へ見積書を送付する",
+      "requester_email": null,
+      "assignee_email": "test.hanako@premiere-mode.co.jp",
+      "fields": {
+        "ステータス": "未着手",
+        "期日": null,
+        "備考": "期日：要確認",
+        "完了条件": "",
+        "親プロジェクトID": null,
+        "事業部領域": [
+          "セールス・マーケ"
+        ]
+      },
+      "evidence": "テスト花子さん：見積を出します"
+    }
+  ],
+  "open_questions": [
+    "見積書の送付期日"
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "meeting_key": "meet:test001_20261021T020000Z",
+  "source": "meet",
+  "scope": "社内",
+  "placement": "社内/Salesforce・AI",
+  "domains": [
+    "Salesforce・AI"
+  ],
+  "related_project_ids": [
+    "00000000-0000-0000-0000-000000000001"
+  ],
+  "minutes_title": "2026-10-21 議事録運用 打ち合わせ",
+  "minutes_doc_id": "DOC_ID_TEST_001",
+  "minutes_markdown": null,
+  "confidence": "高",
+  "reason": "参加者が全員社内で、議題が議事録自動化の運用設計だった",
+  "sensitive": false,
+  "summary": {
+    "decisions": [
+      "録画は Google Meet を優先し、相手主催の会議だけ tl;dv を使う"
+    ],
+    "next_actions": [
+      {
+        "who": "テスト 太郎",
+        "what": "共有ドライブ「MTG記録」を作成する",
+        "due": "2026-10-23"
+      }
+    ]
+  },
+  "task_proposals": [
+    {
+      "type": "新規",
+      "task_db": "プロジェクト",
+      "target_id": null,
+      "title": "共有ドライブ「MTG記録」を作成する",
+      "requester_email": "test.hanako@premiere-mode.co.jp",
+      "assignee_email": "test.taro@premiere-mode.co.jp",
+      "fields": {
+        "ステータス": "未着手",
+        "期日": "2026-10-23",
+        "備考": "",
+        "完了条件": "7部署のフォルダがそろっている",
+        "親プロジェクトID": "00000000-0000-0000-0000-000000000001",
+        "事業部領域": [
+          "Salesforce・AI"
+        ]
+      },
+      "evidence": "テスト太郎さん：今週中にドライブを作ります"
+    }
+  ],
+  "open_questions": []
+}
