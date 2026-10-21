@@ -15,7 +15,8 @@ function harness(dry='false'){
  update(body,id,blob,args){assert.equal(args.supportsAllDrives,true);if(args.addParents){moves++;if(failMove===moves)throw Error('移動の権限エラー');files[id].parents=[args.addParents];files[id].driveId=ids.SHARED_DRIVE_ID;delete files[id].ownedByMe}Object.assign(files[id],clone(body));if(blob){files[id].content=blob.s;files[id].size=String(Buffer.byteLength(blob.s))}files[id].lastModifyingUser={emailAddress:effective};writes.push({op:'update',id,body:clone(body),args:clone(args)});return clone(files[id])}
  }},DriveApp:{getFileById:id=>({getBlob:()=>({getDataAsString:()=>files[id].content})})}});
  ctx.Calendar.Events.get=(calendar,id)=>{assert.equal(calendar,'primary');assert.equal(id,event.id);return clone(event)};
- for(const name of ['config','plan','drive','register','mover'])vm.runInContext(fs.readFileSync('gas-organizer/src/'+name+'.js','utf8'),ctx);
+ for(const name of ['config','plan','drive','register','transcript','mover'])vm.runInContext(fs.readFileSync('gas-organizer/src/'+name+'.js','utf8'),ctx);
+ ctx.Docs={Documents:{get:(id,args)=>{calls.push({op:'docs-get',id,args});return {documentId:id,tabs:[]}}}};
  const nonce=ctx.Organizer_.nonce(email);
  return {ctx,props,user,files,writes,calls,triggers,event,logs,nonce,register:()=>ctx.registerOrganizer(nonce),setActive:v=>active=v,setEffective:v=>effective=v,failAt:n=>failMove=n};
 }
@@ -48,3 +49,31 @@ test('GAS-A定期同期はActiveUser空でもfinance作成者で動き、別作�
  const h=harness();h.ctx.assertFinanceOperator_=()=>{throw Error('手動用認証は使わない')};h.ctx.Stage2Drive_={config:()=>h.props,open:()=>({within(){},root:{id:'root'},children:()=>[]})};h.ctx.Stage2Ledger_={open:()=>({rows:()=>[]})};h.ctx.SpreadsheetApp={openById:()=>({})};h.ctx.Ledger_={withLock:fn=>fn()};vm.runInContext(fs.readFileSync('gas-core/src/syncOrganizers.js','utf8'),h.ctx);h.setActive('');assert.throws(()=>h.ctx.organizerSyncTick_(),/_organizers/);h.setEffective('other@premiere-mode.co.jp');assert.throws(()=>h.ctx.organizerSyncTick_(),/finance@/);
 });
 test('48時間後に添付が0件でも不足3種をmanifestに明記し、データを捏造しない',()=>{const h=harness();h.register();h.event.attachments=[];h.event.end.dateTime=new Date(Date.now()-49*3600000).toISOString();h.event.start.dateTime=new Date(Date.now()-50*3600000).toISOString();const r=h.ctx.moverRun();assert.equal(r[0].status,'ready');const m=JSON.parse(h.files[r[0].manifestId].content);assert.deepEqual(m.files,{});assert.deepEqual(m.missing,['recording','transcript','gemini']);assert.equal(h.writes.filter(w=>w.args?.addParents).length,0)});
+test('Geminiメモの文字起こしタブを検出し、48時間前でも物理2ファイルだけでreadyにする',()=>{
+ const h=harness();h.event.attachments=h.event.attachments.filter(a=>a.fileId!=='transcript');h.files.gemini.name='テスト - 2026-10-21 JST - Gemini によるメモ';
+ h.ctx.Docs.Documents.get=(id,args)=>{h.calls.push({op:'docs-get',id,args});return {documentId:id,tabs:[{tabProperties:{tabId:'notes',title:'メモ'}},{tabProperties:{tabId:'transcript-tab',title:'文字起こし'}}]}};
+ h.register();const result=h.ctx.moverRun()[0],manifest=JSON.parse(h.files[result.manifestId].content);
+ assert.equal(result.status,'ready');assert.deepEqual(manifest.missing,[]);assert.deepEqual(manifest.files,{recording:'rec',gemini:'gemini'});assert.deepEqual(manifest.transcript_source,{type:'document_tab',file_id:'gemini',tab_id:'transcript-tab',tab_title:'文字起こし'});
+ assert.equal(h.writes.filter(w=>w.id==='gemini'&&w.args?.addParents).length,1);assert.equal(h.files.gemini.appProperties.kind,'gemini');assert.equal(h.files.transcript.parents[0],'my-folder');assert.equal(h.calls.find(c=>c.op==='docs-get').args.includeTabsContent,true);
+ h.ctx.moverRun();assert.equal(h.writes.filter(w=>w.id==='gemini'&&w.args?.addParents).length,1);
+});
+test('DRY_RUNでもDocsはGETだけでタブ所在を確認し、移動・新規文書・状態変更をしない',()=>{
+ const h=harness('true');h.event.attachments=h.event.attachments.filter(a=>a.fileId!=='transcript');h.ctx.Docs.Documents.get=(id,args)=>({documentId:id,tabs:[{tabProperties:{tabId:'t',title:' Transcript '}}]});
+ const r=h.ctx.moverRun()[0];assert.equal(r.status,'移動予定');assert.deepEqual(clone(r.missing),[]);assert.equal(r.files.length,2);assert.equal(r.transcript_source.type,'document_tab');assert.equal(h.writes.length,0);assert.deepEqual(h.user,{});
+});
+test('子タブを再帰探索し、同名文字起こしタブの複数候補・ID欠落を拒否する',()=>{
+ const h=harness(),p=h.ctx.OrganizerTranscript_;const tab={tabProperties:{tabId:'t',title:'Ｔｒａｎｓｃｒｉｐｔ'}};
+ assert.equal(p.findTab({tabs:[{tabProperties:{tabId:'notes',title:'メモ'},childTabs:[tab]}]}).tab_id,'t');assert.throws(()=>p.findTab({tabs:[tab,{tabProperties:{tabId:'other',title:'文字起こし'}}]}),/複数/);assert.throws(()=>p.findTab({tabs:[{tabProperties:{title:'文字起こし'}}]}),/ID/);assert.equal(p.findTab({tabs:[{tabProperties:{tabId:'notes',title:'メモ・文字起こしについて'}}]}),null);
+});
+test('別ファイルの文字起こしを優先し、Docs APIを呼ばず所在をmanifestへ記録する',()=>{
+ const h=harness();h.ctx.Docs.Documents.get=()=>{throw Error('別ファイルがあるときは呼ばない')};h.register();const r=h.ctx.moverRun()[0],manifest=JSON.parse(h.files[r.manifestId].content);assert.deepEqual(manifest.transcript_source,{type:'file',file_id:'transcript'});assert.equal(Object.keys(manifest.files).length,3);
+});
+test('タブ不在は従来の添付待ち、Docs権限エラー・文書ID不一致・曖昧なタブは移動前に停止する',()=>{
+ const h=harness('true');h.event.attachments=h.event.attachments.filter(a=>a.fileId!=='transcript');assert.deepEqual(clone(h.ctx.moverRun()[0].missing),['transcript']);
+ for(const response of [()=>{throw Error('HTTP 403')},()=>({documentId:'wrong',tabs:[]}),id=>({documentId:id,tabs:[{tabProperties:{tabId:'a',title:'Transcript'}},{tabProperties:{tabId:'b',title:'文字起こし'}}]})]){const x=harness();x.event.attachments=x.event.attachments.filter(a=>a.fileId!=='transcript');x.register();x.ctx.Docs.Documents.get=response;const count=x.writes.length;assert.throws(()=>x.ctx.moverRun());assert.equal(x.writes.filter(w=>w.args?.addParents).length,0);assert.equal(Object.values(x.files).some(f=>f.name==='manifest.json'),false)}
+});
+test('会議別のマイドライブサブフォルダからも添付IDで移動し、元のフォルダ自体は変更しない',()=>{
+ const h=harness();h.files.rec.parents=['meeting-subfolder'];h.files.gemini.parents=['meeting-subfolder'];h.event.attachments=h.event.attachments.filter(a=>a.fileId!=='transcript');h.ctx.Docs.Documents.get=id=>({documentId:id,tabs:[{tabProperties:{tabId:'t',title:'文字起こし'}}]});h.register();h.ctx.moverRun();const moves=h.writes.filter(w=>w.args?.addParents);assert.equal(moves.length,2);assert.ok(moves.every(w=>w.args.removeParents==='meeting-subfolder'));assert.equal(h.writes.some(w=>w.id==='meeting-subfolder'),false);
+});
+
+test('会議名に文字起こしを含んでもGoogle生成のGeminiメモ末尾を優先して識別する',()=>{const h=harness();assert.equal(h.ctx.MoverPlan_.kind({mimeType:'application/vnd.google-apps.document',name:'文字起こしテスト - 2026-10-21 JST - Gemini によるメモ'}),'gemini')});

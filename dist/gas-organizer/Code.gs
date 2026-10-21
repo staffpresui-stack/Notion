@@ -67,21 +67,24 @@ function moverRun(e){return Organizer_.lock(function(){
     if(Date.now()-started>240000)return;
     var plan=MoverPlan_.event(event,email,now,c.MOVER_WAIT_MIN);if(!plan){results.push({eventId:event.id,status:'対象外・終了待ち',message:'自分主催のMeet付き予定、終了待ち時間を確認してください。'});return;}
     var stateKey='mover:'+Organizer_.hash(plan.key),saved=user.getProperty(stateKey),state=saved?JSON.parse(saved):{};
-    if(state.ready){results.push({meeting_key:plan.key,status:'処理済み',folderId:state.folderId,manifestId:state.manifestId});return;}
+    if(state.ready){results.push({meeting_key:plan.key,status:'処理済み',folderId:state.folderId,manifestId:state.manifestId,transcript_source:state.transcriptSource||null});return;}
     var folder=drive.child(drive.raw.id,plan.folderKey,'meeting_raw',plan.key,false),meta={};
     (event.attachments||[]).forEach(function(a){if(a.fileId&&!meta[a.fileId])meta[a.fileId]=drive.get(a.fileId);});
     var files=MoverPlan_.files(event.attachments,meta);files.ignored.forEach(function(f){console.log('判定できない添付は移動しません: '+f.name);});
     var items=Object.keys(files.found);
     items.forEach(function(k){drive.validateSource(files.found[k],folder,plan.key,email);});
+    var transcriptSource=OrganizerTranscript_.resolve(files);
+    if(transcriptSource)files.missing=files.missing.filter(function(k){return k!=='transcript';});
+    plan.manifest.transcript_source=transcriptSource;
     if(files.missing.length&&!plan.expired){results.push({meeting_key:plan.key,status:'添付待ち',missing:files.missing});return;}
-    var planned={meeting_key:plan.key,status:c.DRY_RUN==='true'?'移動予定':'移動中',folderName:plan.folderKey,files:items.map(function(k){var f=files.found[k];return {kind:k,id:f.id,name:f.name,from:f.parents[0],to:folder?folder.id:c.FOLDER_INBOX_RAW_TEST_ID+'/'+plan.folderKey};}),missing:files.missing};console.log(JSON.stringify(planned));
+    var planned={meeting_key:plan.key,status:c.DRY_RUN==='true'?'移動予定':'移動中',folderName:plan.folderKey,files:items.map(function(k){var f=files.found[k];return {kind:k,id:f.id,name:f.name,from:f.parents[0],to:folder?folder.id:c.FOLDER_INBOX_RAW_TEST_ID+'/'+plan.folderKey};}),missing:files.missing,transcript_source:transcriptSource};console.log(JSON.stringify(planned));
     if(c.DRY_RUN==='true'){results.push(planned);return;}
     folder=folder||drive.child(drive.raw.id,plan.folderKey,'meeting_raw',plan.key,true);state.folderId=folder.id;state.ready=false;user.setProperty(stateKey,JSON.stringify(state));
     items.forEach(function(k){drive.move(files.found[k],folder,plan.key,k,email);plan.manifest.files[k]=files.found[k].id;});
     plan.manifest.missing=files.missing;
     var manifest=drive.json(folder.id,'manifest.json',plan.manifest,'manifest');
-    state.ready=true;state.manifestId=manifest.id;user.setProperty(stateKey,JSON.stringify(state));
-    results.push({meeting_key:plan.key,status:'ready',folderId:folder.id,manifestId:manifest.id,missing:files.missing});
+    state.ready=true;state.manifestId=manifest.id;state.transcriptSource=transcriptSource;user.setProperty(stateKey,JSON.stringify(state));
+    results.push({meeting_key:plan.key,status:'ready',folderId:folder.id,manifestId:manifest.id,missing:files.missing,transcript_source:transcriptSource});
   });
     if(c.DRY_RUN==='false'){registration.last_run_at=new Date().toISOString();registration.last_result=results.map(function(r){return r.status;}).join('／');OrganizerRegistration_.save(registration);OrganizerRegistration_.receipt(c,drive,email,registration);}
   }catch(err){console.log('GAS-B処理を停止しました: '+err.message);if(c.DRY_RUN==='false'){registration.last_run_at=new Date().toISOString();registration.last_result='エラー：'+String(err.message).slice(0,160);OrganizerRegistration_.save(registration);try{OrganizerRegistration_.receipt(c,drive,email,registration);}catch(ignore){console.log('登録状況の更新も失敗しました。GASの実行履歴を確認してください。');}}throw err;}
@@ -110,7 +113,7 @@ var MoverPlan_=(function(){
     if(!attendees.some(function(a){return a.email.toLowerCase()===email;}))attendees.push({email:email,name:email});
     return {key:key,folderKey:key.replace(/:/g,'_'),expired:now-Date.parse(end)>=48*3600000,manifest:{meeting_key:key,source:'meet',event_id:event.id,title:event.summary||'会議',start:start,end:end,organizer_email:email,attendees:attendees,meet_url:entry.uri,files:{},missing:[],status:'ready',created_at:new Date(now).toISOString()}};
   }
-  function kind(file){var mime=file.mimeType||'',name=file.name||'';if(mime.startsWith('video/'))return 'recording';if(mime!=='application/vnd.google-apps.document')return null;var transcript=/文字起こし|transcript/i.test(name),gemini=/gemini|メモ|meeting notes|notes by/i.test(name);if(transcript&&gemini)throw new Error('文字起こしとメモの判定が重複しています: '+name);return transcript?'transcript':gemini?'gemini':null;}
+  function kind(file){var mime=file.mimeType||'',name=file.name||'';if(mime.startsWith('video/'))return 'recording';if(mime!=='application/vnd.google-apps.document')return null;if(/(?:gemini\s*によるメモ|notes\s+by\s+gemini)\s*$/i.test(name))return 'gemini';var transcript=/文字起こし|transcript/i.test(name),gemini=/gemini|メモ|meeting notes|notes by/i.test(name);if(transcript&&gemini)throw new Error('文字起こしとメモの判定が重複しています: '+name);return transcript?'transcript':gemini?'gemini':null;}
   function files(attachments,metadata){var found={},ignored=[];var seen=new Set();(attachments||[]).forEach(function(a){if(!a.fileId||seen.has(a.fileId))return;seen.add(a.fileId);var f=metadata[a.fileId];if(!f)throw new Error('添付のメタデータを取得できません。');var k=kind(f);if(!k){ignored.push({id:f.id,name:f.name});return;}if(found[k])throw new Error('同じ種類の添付が複数あります。自動選択せず停止します: '+k);found[k]=f;});return {found:found,ignored:ignored,missing:kinds.filter(function(k){return !found[k];})};}
   return {event:event,files:files,kind:kind,kinds:kinds};
 })();
@@ -148,3 +151,34 @@ function registerOrganizer(nonce){return OrganizerRegistration_.change(nonce,tru
 function unregisterOrganizer(nonce){return OrganizerRegistration_.change(nonce,false);}
 
 function runOrganizerNow(nonce){Organizer_.verify(Organizer_.actor(false),nonce);return moverRun();}
+
+
+// transcript.js
+// Docsは読み取りだけです。物理ファイルは増やさず、タブの所在をmanifestに残します。
+var OrganizerTranscript_=(function(){
+  function findTab(document){
+    var matches=[];
+    function visit(tabs){(tabs||[]).forEach(function(tab){
+      var p=tab.tabProperties||{},title=String(p.title||'').normalize('NFKC').trim().toLowerCase();
+      if(['文字起こし','transcript'].includes(title)){
+        if(typeof p.tabId!=='string'||!p.tabId)throw new Error('文字起こしタブのIDを確認できません。');
+        matches.push({tab_id:p.tabId,tab_title:p.title});
+      }
+      visit(tab.childTabs);
+    });}
+    visit(document.tabs);
+    if(matches.length>1)throw new Error('文字起こしタブが複数あります。自動選択せず停止します。');
+    return matches[0]||null;
+  }
+  function resolve(files){
+    if(files.found.transcript)return {type:'file',file_id:files.found.transcript.id};
+    if(!files.found.gemini)return null;
+    var id=files.found.gemini.id,document;
+    try{document=Docs.Documents.get(id,{includeTabsContent:true,fields:'documentId,tabs(tabProperties(tabId,title),childTabs)'});}
+    catch(e){throw new Error('Geminiメモのタブを読み取れません。Docs API・読み取り権限を確認してください：'+String(e.message||'取得失敗').slice(0,220));}
+    if(!document||document.documentId!==id)throw new Error('取得したGeminiメモのドキュメントIDが一致しません。');
+    var tab=findTab(document);
+    return tab?{type:'document_tab',file_id:id,tab_id:tab.tab_id,tab_title:tab.tab_title}:null;
+  }
+  return {findTab:findTab,resolve:resolve};
+})();

@@ -1,5 +1,7 @@
 # 段階1：finance@の主催者用GAS-B
 
+Geminiメモの文字起こしタブ方式への更新は [ORGANIZER_TABS_UPDATE.md](ORGANIZER_TABS_UPDATE.md) を先に参照してください。物理ファイル2件でも必要な内容が揃えばreadyになります。
+
 GAS-Bは **別プロジェクト** です。本体GAS-Aのコードと混ぜません。今回の版はfinance@本人と、指定したテスト予定1件だけを扱います。ENV=test以外、指定の共有ドライブ・テスト受信フォルダ以外はコードで拒否します。社員への展開と本番切替はまだ行いません。
 
 ## 1. finance@で別プロジェクトを作る
@@ -7,7 +9,7 @@ GAS-Bは **別プロジェクト** です。本体GAS-Aのコードと混ぜま�
 1. finance@premiere-mode.co.jpでApps Scriptを開き、例「MTG議事録自動化・主催者用」を作成します。
 2. `dist/gas-organizer/Code.gs`をコード.gsに全文貼り付けます。
 3. HTMLファイル **Register** を作り、`dist/gas-organizer/Register.html`を全文貼り付けます。
-4. プロジェクト設定からappsscript.jsonを表示し、`dist/gas-organizer/appsscript.json`を反映します。Drive API v3とCalendar API v3を使用します。左の「サービス」に両方があることを確認します。標準Cloudプロジェクトを使う場合は、そちらでも両APIを有効にします。
+4. プロジェクト設定からappsscript.jsonを表示し、`dist/gas-organizer/appsscript.json`を反映します。Drive API v3・Calendar API v3・Docs API v1を使用します。左の「サービス」に3つがあることを確認します。標準Cloudプロジェクトを使う場合は、そちらでも3つのAPIを有効にします。
 
 スコープはDrive、Calendar読み取り、トリガー、本人メールだけです。Notion・ChatworkのトークンやGAS-A台帳のIDはGAS-Bに入れません。
 
@@ -35,7 +37,7 @@ GAS-Aとは別の設定です。GAS-Bの「プロジェクトの設定」で入�
 2. Meetで録画・文字起こし・Geminiメモをオンにして、短い会議を実施します。利用プラン・管理者設定によって使える機能が違います。表示されない機能があれば、その事実を確認して止めてください。
 3. GAS-Bのエディタで `checkOrganizerConfig()` を実行し、finance@で認証します。DRY_RUN=true、移動先IDがテスト受信であることを確認します。
 4. `listOrganizerTestEvents()` を実行します。過去72時間〜翌日の自分主催Meet予定の「タイトル／開始日時／MOVER_TEST_EVENT_ID／添付数」がログに出ます。今回の予定IDをスクリプトプロパティに設定します。CalendarのURLを丸ごと設定したり、iCalUIDを設定したりしないでください。繰り返し予定の場合は対象回のインスタンスIDを使います。
-5. 予定の添付とマイドライブで、録画・文字起こし・Geminiメモの3ファイルが生成されていることを確認します。通知が来ても予定のattachmentsに反映されるまで待つことがあります。
+5. 予定の添付とマイドライブで、録画とGeminiメモ（中に文字起こしタブ）、または録画・文字起こし・Geminiメモの3ファイルが生成されていることを確認します。通知が来ても予定のattachmentsに反映されるまで待つことがあります。
 
 IDの取得関数は予定の読み取りだけです。MOVER_TEST_EVENT_IDがなければmoverRunは動きません。実機テストで過去の他の会議を誤って移動しないための制限です。
 
@@ -53,8 +55,8 @@ IDの取得関数は予定の読み取りだけです。MOVER_TEST_EVENT_IDが�
 ## 5. DRY_RUNで確認する
 
 1. 予定終了からMOVER_WAIT_MIN（既定20分）以上待ち、画面の「今すぐ確認する」、またはエディタの `moverRun()` を実行します。
-2. 3種類が揃えば「移動予定」と、元ファイル名・種類・移動元・テスト移動先が表示されます。Drive、UserProperties、トリガー、登録ファイルは変更しません。GAS-Bの実行ログにも予定を残します。台帳編集権限を持たせないため、GAS-B自身はdry_run_logへ書き込みません。
-3. 「添付待ち」なら、未到着の種類が表示されます。既定では3種が揃うまで待ち、予定終了から48時間後は揃った分だけreadyにしてmissingへ不足を記載します。0件でもmissingに3種を明記し、内容を作りません。全て不足の場合は議事録生成へ進めず人が確認してください。
+2. 録画・メモ・文字起こしの内容が揃えば「移動予定」と、元ファイル名・種類・移動元・テスト移動先が表示されます。Drive、UserProperties、トリガー、登録ファイルは変更しません。GAS-Bの実行ログにも予定を残します。台帳編集権限を持たせないため、GAS-B自身はdry_run_logへ書き込みません。
+3. 「添付待ち」なら、未到着の種類が表示されます。既定では必要な内容が揃うまで待ち（メモ内文字起こしタブも含む）、予定終了から48時間後は揃った分だけreadyにしてmissingへ不足を記載します。0件でもmissingに3種を明記し、内容を作りません。全て不足の場合は議事録生成へ進めず人が確認してください。
 4. DRY_RUN=trueの「登録」は予定表示だけで、トリガーは増えません。
 
 未知の添付は移動せずログに残します。同じ種類が複数あれば自動選択せず停止します。名前による判定は、動画→録画、Google文書の「文字起こし／Transcript」→文字起こし、「Gemini／メモ／Meeting notes／Notes by」→メモです。異なる命名ならファイル名・種類を報告してください。添付にないファイルをDrive全体から推測して探す機能はありません。
@@ -64,8 +66,8 @@ IDの取得関数は予定の読み取りだけです。MOVER_TEST_EVENT_IDが�
 1. GAS-BのプロパティでDRY_RUN=falseに変更し、Web画面を再読み込みします。
 2. 「この PC のアカウントで登録」を押します。moverRunの時間主導トリガーが **finance@自身の権限で1個だけ** 作られます。もう一度押しても増えません。_test/_organizersに登録ファイル1件が作られます。
 3. 「今すぐ確認する」を押すか、登録後にエディタから `moverRun()` を実行します。自動実行の場合は15分程度待ちます。実機で権限エラーが出たら、実行履歴とエラー内容を確認し、権限を直すまで止めてください。コピー・削除への自動切替はありません。
-4. テスト受信に `meet_<予定ID>_<開始時刻UTC>/` 相当の会議フォルダができ、3ファイルが移動していることを確認します。元ファイルIDを保ち、ファイルにmeeting_keyとkindのappPropertiesを付けます。
-5. `manifest.json`を開き、source=meet、実際のevent_id・日時・主催者・参加者・Meet URL・filesの3ID、missing=[]、status=readyを確認します。主催者が参加者一覧にない予定でも主催者を補います。readyのmanifestは全対象の移動成功後に作成します。
+4. テスト受信に `meet_<予定ID>_<開始時刻UTC>/` 相当の会議フォルダができ、タブ方式は2ファイル、別ファイル方式は3ファイルが移動していることを確認します。元ファイルIDを保ち、ファイルにmeeting_keyとkindのappPropertiesを付けます。
+5. `manifest.json`を開き、source=meet、実際のevent_id・日時・主催者・参加者・Meet URL・filesの物理ファイルIDとtranscript_sourceの所在、missing=[]、status=readyを確認します。主催者が参加者一覧にない予定でも主催者を補います。readyのmanifestは全対象の移動成功後に作成します。
 6. 同じ関数を再実行して「処理済み」となり、会議フォルダ・manifest・ファイルが増えたり再移動したりしないことを確認します。GAS-Aが後で受信フォルダを移動しても、GAS-B側の処理済み記録で再処理しません。UserPropertiesのorganizer_registrationやmover:*は消さないでください。
 7. 部分的に移動して停止した場合は、同じID・会議フォルダを使って再開します。readyのmanifestは途中状態では作りません。
 

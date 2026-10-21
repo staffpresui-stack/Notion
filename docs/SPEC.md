@@ -93,8 +93,12 @@ MTG記録/
   3. 添付fileIdの実MIME・名前から録画／文字起こし／Geminiメモを判定します。同種複数は自動選択せず停止、不明は移動しません。自分所有でない・別ドライブ・別会議・ショートカットは処理しません。
   4. 本番切替前は指定共有ドライブの `_system/_test/00_受信/{folder_key}/` に限定。My Driveの添付を同じIDで移動し、appPropertiesにmeeting_key・kindを付けます。受け渡し用フォルダの目印には別GASから読めるpropertiesを使います。ID・実親階層・共有ドライブ所属・移動能力を検査します。
   5. 全ファイル移動後にmanifest.jsonをreadyで作成。UserPropertiesのmover:*、会議フォルダ、添付マーカーで再実行時の重複移動・作成を避けます。途中失敗は同じフォルダから再開します。削除・コピーへの切替はしません。
-  6. 3種が揃わない場合は待機し、予定終了から48時間後は揃った分だけreadyにしmissingに不足を記録します。全て不足の場合も不足を明示し、人が確認してから後段へ進めます。
+  6. 文字起こしは別ファイルだけでなく、GeminiメモのGoogleドキュメント内の「文字起こし」または「Transcript」タブでも充足とします。Docs APIのdocuments.get(includeTabsContent=true)で読み取りのみ行い、子タブも再帰探索します。別ファイルがあればそちらを優先します。完全一致（NFKC・前後空白・英字大小を正規化）で複数候補なら自動選択せず停止します。Docs取得失敗も移動前に停止します。メモの最初のタブを文字起こしとして代用しません。
+  7. 録画・Geminiメモ・文字起こしの内容が揃わない場合は待機し、予定終了から48時間後は揃った分だけreadyにしmissingに不足を記録します。全て不足の場合も不足を明示し、人が確認してから後段へ進めます。
 - 実機試験の作成・設定・デプロイ・共有ドライブ所有権と予定添付リンクの確認は `ORGANIZER_TEST.md`。本人のMy Driveから共有ドライブへの移動で個人所有から組織所有へ変わるため、実権限・閲覧維持は実機で確認します。
+- Geminiメモ内タブの場合、物理ファイルは録画とメモの2件だけ移動し、filesに同じIDを二重登録しません。元の会議別マイドライブサブフォルダは移動・削除せず、予定に添付されたファイルIDの実際の親だけ変更します。
+- manifestの追加項目transcript_source：別ファイルは `{"type":"file","file_id":"文字起こしDocのID"}`、メモ内タブは `{"type":"document_tab","file_id":"GeminiメモDocのID","tab_id":"対象タブID","tab_title":"文字起こし"}`、未到着はnull。タブ方式ではfiles.geminiだけを記録し、files.transcriptは設けず、missingからtranscriptを外します。旧manifestのfiles.transcript／files.tldv_transcriptも引き続き読み取れます。
+- Docs v1サービスをGAS-Bへ追加します。documents.getは既存のDrive OAuthスコープを受け付けるためスコープ追加は不要。Docsの書き込みは行いません。
 - manifest.json：
 ```json
 {
@@ -108,6 +112,7 @@ MTG記録/
   "attendees": [{"email": "sato@premiere-mode.co.jp", "name": "佐藤"}, {"email": "taro@example.co.jp", "name": "山田"}],
   "meet_url": "https://meet.google.com/xxx-xxxx-xxx",
   "files": {"recording": "fileId", "transcript": "fileId", "gemini": "fileId"},
+  "transcript_source": {"type": "file", "file_id": "文字起こしのfileId"},
   "missing": [],
   "status": "ready",
   "created_at": "2026-10-21T12:25:00+09:00"
@@ -132,6 +137,7 @@ MTG記録/
 ## 7. 議事録の生成
 
 ### 7-1. ChatGPT 予約タスク（`GENERATOR_MODE=CHATGPT`、既定）
+- ChatGPTはtranscript_sourceに従い、別ファイルまたはGeminiメモ内の指定文字起こしタブを読みます。指定タブを接続機能で読めない場合は生成せずエラー記録とします。メモの要約で代用しません。テスト用の予約タスク指示文は_system/_testを既定とします。
 - ChatGPT は `00_受信/*/manifest.json` のうち `status: "ready"` で、`inbox/{folder_key}.json` も `inbox/_done/{folder_key}.json` も無いものを処理する。
 - 出力：`inbox/{folder_key}_議事録`（Google ドキュメント）と `inbox/{folder_key}.json`（`schemas/inbox_judgement.schema.json` に従う）。指示文は `prompts/chatgpt_scheduled_task.md`。
 - 判定 JSON が書けない場合（Drive への書き込み不可・承認待ち）は、実機検証の結果で `GENERATOR_MODE=OPENAI_API` に切り替える。
