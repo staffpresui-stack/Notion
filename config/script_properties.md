@@ -7,6 +7,7 @@ GAS エディタ「プロジェクトの設定」＞「スクリプト プロパ
 | キー | 例・既定 | 説明 |
 |---|---|---|
 | DRY_RUN | `true` | 開発中は true。本番切り替えは人の承認後 |
+| SETUP_CREATE_TEST_DB | `false`（初期作成時のみ `true`） | `ENV=test` と組み合わせ、setupTestDatabasesによる管理ページ下のテストDB作成だけを許可。実行後falseに戻す |
 | ENV | `test` / `prod` | test のとき下の *_TEST を使う |
 | LEDGER_SPREADSHEET_ID | | 台帳スプレッドシート |
 | SHARED_DRIVE_ID | | 共有ドライブ「MTG記録」 |

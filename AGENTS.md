@@ -14,6 +14,8 @@
 
 ## 最新のユーザー指定（元の設計より優先）
 
+- ユーザーがテストDB初期作成関数の実装を明示依頼済み。`setupTestDatabases()` は `ENV=test` と `SETUP_CREATE_TEST_DB=true` で管理ページ下への初期作成を許可する専用機能です。この関数はDRY_RUN=trueでもテストDBを実作成します。GAS実行とNotionへの書き込みはユーザーが行います。Codex側では実行しません。通常処理のDRY_RUN制約は維持します。手順は `docs/SETUP_TEST_DATABASES.md`。
+
 - GAS-A・GAS-Bの作成・所有・clasp認証は `staff.presui@gmail.com` を使います。Notion・ChatGPT・tl;dv・Chatworkのアカウント変更は指示されていません。
 - 個人Gmailには会社ドメイン限定公開を適用できないため、現時点ではWebアプリを公開しません。共有ドライブへのアクセス権も別途検証します。権限がない場合に無断で個人Driveへ保存先を変えないでください。
 - 以下のcontact@所有という記載は元の設計です。GASの所有者・実行用アカウントに関しては今回の指定を優先します。GAS-Bの実行権限は引き続き各会議主催者です。
