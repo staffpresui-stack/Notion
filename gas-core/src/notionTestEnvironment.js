@@ -2,7 +2,7 @@ var NotionTestEnvironment_ = (function () {
   var parent = '400ca178-7419-80e8-bb9a-f157874b6105';
   var ids = { minutes: 'd9cc47f9-543e-4bcb-8ec8-27bebc0feac5', tasks: 'c908936a-6999-4119-9e9c-df364f5f5d1b' };
   function normalize(value) { return String(value || '').replace(/-/g, '').toLowerCase(); }
-  function open(writingWorkflow) {
+  function open(writingWorkflow, purpose) {
     var properties = PropertiesService.getScriptProperties();
     if (properties.getProperty('ENV') !== 'test') throw new Error('ENV=test が必要です。');
     var dryRun = properties.getProperty('DRY_RUN');
@@ -13,11 +13,14 @@ var NotionTestEnvironment_ = (function () {
       var name = k === 'minutes' ? 'NOTION_DB_MINUTES_TEST' : 'NOTION_DB_TASKS_TEST';
       if (normalize(properties.getProperty(name)) !== normalize(ids[k])) throw new Error(name + ' が確認済みテストDBのIDと一致しません。');
     });
-    var verified = {};
+    var verified = {}, allowedPages = new Set(), inboxPatch = null;
     function request(method, path, body, optionalStatuses) {
       if (method !== 'get') {
-        if (!writingWorkflow || dryRun !== 'false' || method !== 'post' || path !== 'pages' || !verified.minutes || !verified.tasks ||
-            !body.parent || body.parent.type !== 'data_source_id' || normalize(body.parent.data_source_id) !== normalize(verified.minutes.sourceId)) throw new Error('テスト議事録DBへのページ作成以外は禁止です。');
+        var create = method === 'post' && path === 'pages' && verified.minutes && verified.tasks && body.parent && body.parent.type === 'data_source_id' && normalize(body.parent.data_source_id) === normalize(verified.minutes.sourceId);
+        var append = /^blocks\/([^/]+)\/children$/.exec(path);
+        var appendAllowed = method === 'patch' && append && allowedPages.has(normalize(append[1])) && body.children && body.children.length <= 100;
+        var optionAllowed = purpose === 'inbox-options' && inboxPatch && method === 'patch' && path === inboxPatch.path && JSON.stringify(body) === inboxPatch.body;
+        if (!writingWorkflow || dryRun !== 'false' || !(create || appendAllowed || optionAllowed)) throw new Error('確認済みテスト対象以外への書き込みは禁止です。');
       }
       var options = { method: method, headers: { Authorization: 'Bearer ' + token, 'Notion-Version': '2025-09-03' }, muteHttpExceptions: true };
       if (body) { options.contentType = 'application/json'; options.payload = JSON.stringify(body); }
@@ -29,7 +32,7 @@ var NotionTestEnvironment_ = (function () {
       try { data = JSON.parse(response.getContentText()); } catch (e) { throw new Error('NotionからJSON以外の応答が返りました。HTTP ' + status); }
       if (status < 200 || status >= 300) {
         if ((optionalStatuses || []).includes(status)) return null;
-        throw new Error('Notionテスト接続: HTTP ' + status + ' / ' + String(data.code || '不明'));
+        var error = new Error('Notionテスト接続: HTTP ' + status + ' / ' + String(data.code || '不明')); error.httpStatus = status; throw error;
       }
       return data;
     }
@@ -65,8 +68,30 @@ var NotionTestEnvironment_ = (function () {
       return page.parent.type === 'data_source_id' && normalize(page.parent.data_source_id) === normalize(verified.tasks.sourceId) ||
         page.parent.type === 'database_id' && normalize(page.parent.database_id) === normalize(ids.tasks) ? page.id : null;
     }
-    function createPage(payload) { return request('post', 'pages', payload); }
+    function verifyMinutesPage(id) {
+      var page = request('get', 'pages/' + encodeURIComponent(id));
+      if (!verified.minutes || page.archived || page.in_trash || !page.parent || !(page.parent.type === 'data_source_id' && normalize(page.parent.data_source_id) === normalize(verified.minutes.sourceId) || page.parent.type === 'database_id' && normalize(page.parent.database_id) === normalize(ids.minutes))) throw new Error('記録済みページがテスト議事録DBに属していません。');
+      allowedPages.add(normalize(page.id)); return page;
+    }
+    function createPage(payload) { var page = request('post', 'pages', payload); if (page.id) allowedPages.add(normalize(page.id)); return page; }
+    function appendBlocks(id, children) { return request('patch', 'blocks/' + id + '/children', { children: children }); }
+    function addInboxOptions() {
+      if (purpose !== 'inbox-options') throw new Error('選択肢追加専用の呼び出しではありません。');
+      var inbox = discoverInbox();
+      if (normalize(inbox.databaseId) !== normalize('400ca178-7419-80dd-a3e0-ef9e2267a64c') || normalize(properties.getProperty('NOTION_DB_TLDV_INBOX')) !== normalize(inbox.databaseId)) throw new Error('確認済みtl;dv受信DBのIDが必要です。');
+      var property = inbox.properties['取り込み状態'];
+      if (!property || property.type !== 'select') throw new Error('取り込み状態はselect型が必要です。');
+      var plan = InboxPlan_.mergeOptions(property.select.options || []);
+      console.log('取り込み状態の追加予定: ' + JSON.stringify(plan.added));
+      if (dryRun === 'true' || !plan.added.length) return { added: plan.added, dryRun: dryRun === 'true' };
+      var body = { properties: { '取り込み状態': { type: 'select', select: { options: plan.options } } } };
+      inboxPatch = { path: 'data_sources/' + inbox.sourceId, body: JSON.stringify(body) };
+      request('patch', inboxPatch.path, body); inboxPatch = null;
+      console.log('不足していた選択肢だけを追加しました。');
+      return { added: plan.added, dryRun: false };
+    }
     return { properties: properties, dryRun: dryRun === 'true', schema: schema, inbox: discoverInbox, project: project, createPage: createPage,
+      verifyMinutesPage: verifyMinutesPage, appendBlocks: appendBlocks, addInboxOptions: addInboxOptions,
       ids: { minutes: ids.minutes, tasks: ids.tasks } };
   }
   return { open: open, normalize: normalize };
@@ -75,10 +100,11 @@ var NotionTestEnvironment_ = (function () {
 function checkTestEnvironment() {
   var env = NotionTestEnvironment_.open(false), report = { databases: [], differences: [], inboxId: null };
   function inspect(key, schema) {
-    var comparison = NotionFixturePlan_.compareSchema(key, schema.properties);
+    var comparison = NotionFixturePlan_.compareSchema(key, schema.properties, env.properties.getProperty('NOTION_REQUESTER_TYPE') || 'people');
     report.databases.push({ name: key, databaseId: schema.databaseId, properties: comparison.properties });
     comparison.differences.forEach(function (d) { report.differences.push(Object.assign({ database: key }, d)); });
     console.log('項目名・型: ' + key + ' / ' + JSON.stringify(comparison.properties));
+    if (comparison.knownAdditions.length) console.log('既知の追加項目（書き込みには使いません）: ' + JSON.stringify(comparison.knownAdditions));
   }
   inspect('minutes', env.schema(env.ids.minutes, 'minutes'));
   inspect('tasks', env.schema(env.ids.tasks, 'tasks'));
@@ -89,6 +115,8 @@ function checkTestEnvironment() {
     console.log('NOTION_DB_TLDV_INBOX = ' + inbox.databaseId + ' をスクリプトプロパティに登録してください。');
   } catch (e) { report.differences.push({ database: 'inbox', kind: '取得失敗', message: e.message }); }
   console.log('SPECとの差分一覧: ' + JSON.stringify(report.differences));
-  console.log('依頼者の型・tl;dvの参加者形式などSPECで未確定の部分は参考として表示します。設定・Notionへの書き込みは行っていません。');
+  console.log('依頼者はNOTION_REQUESTER_TYPE（既定people）で照合します。設定・Notionへの書き込みは行っていません。');
   return report;
 }
+
+function addTldvInboxStatusOptions() { return Ledger_.withLock(function () { return NotionTestEnvironment_.open(true, 'inbox-options').addInboxOptions(); }); }

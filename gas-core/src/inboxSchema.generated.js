@@ -1,0 +1,88 @@
+// schemas/inbox_judgement.schema.jsonから生成します。
+var InboxJudgementSchema_ = {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "inbox_judgement.schema.json",
+  "title": "議事録の判定JSON（_system/inbox/{folder_key}.json）",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["meeting_key", "source", "scope", "placement", "domains", "related_project_ids", "minutes_title", "confidence", "reason", "sensitive", "summary", "task_proposals", "open_questions"],
+  "properties": {
+    "meeting_key": { "type": "string", "pattern": "^(meet|tldv):.+$", "description": "manifest.json の meeting_key をそのまま入れる" },
+    "source": { "type": "string", "enum": ["meet", "tldv"] },
+    "scope": { "type": "string", "enum": ["社内", "社外"] },
+    "placement": {
+      "type": "string",
+      "description": "格納先。社内は 社内/{部署}（部署は8つから）。社外は 社外/{顧客名}。顧客名が ref/masters.json の clients に無いときは末尾に（要確認）を付ける",
+      "pattern": "^(社内/(事業部全体|セールス・マーケ|EC|生産管理|経理・バックオフィス|Salesforce・AI|経営)|社外/.+)$"
+    },
+    "domains": {
+      "type": "array",
+      "description": "Notion の事業部領域。6つの選択肢の完全一致名だけ",
+      "items": { "type": "string", "enum": ["セールス・マーケ", "EC", "生産管理", "経理・バックオフィス", "Salesforce・AI", "経営"] },
+      "uniqueItems": true
+    },
+    "related_project_ids": {
+      "type": "array",
+      "description": "ref/projects.json にある Notion ページ ID だけ",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "minutes_title": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2} .+$" },
+    "minutes_doc_id": { "type": ["string", "null"], "description": "GENERATOR_MODE=CHATGPT のとき、inbox に作った議事録 Google ドキュメントの ID" },
+    "minutes_markdown": { "type": ["string", "null"], "description": "GENERATOR_MODE=OPENAI_API のとき、議事録本文（GAS が Doc にする）" },
+    "confidence": { "type": "string", "enum": ["高", "中", "低"] },
+    "reason": { "type": "string", "maxLength": 200, "description": "判定の根拠を1文で" },
+    "sensitive": { "type": "boolean", "description": "経営・人事・評価・健康など個人に関わる話題を含むか" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decisions", "next_actions"],
+      "properties": {
+        "decisions": { "type": "array", "items": { "type": "string" } },
+        "next_actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["who", "what", "due"],
+            "properties": {
+              "who": { "type": "string" },
+              "what": { "type": "string" },
+              "due": { "type": ["string", "null"], "description": "YYYY-MM-DD。不明は null" }
+            }
+          }
+        }
+      }
+    },
+    "task_proposals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "task_db", "target_id", "title", "requester_email", "assignee_email", "fields", "evidence"],
+        "properties": {
+          "type": { "type": "string", "enum": ["新規", "更新", "リンク"] },
+          "task_db": { "type": "string", "enum": ["プロジェクト", "非プロジェクト"] },
+          "target_id": { "type": ["string", "null"], "description": "更新・リンクのときは ref/projects.json のページ ID。新規は null" },
+          "title": { "type": "string" },
+          "requester_email": { "type": ["string", "null"] },
+          "assignee_email": { "type": ["string", "null"] },
+          "fields": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "ステータス": { "type": "string", "enum": ["未着手", "保留", "進行中", "対応不要", "完了"] },
+              "期日": { "type": ["string", "null"] },
+              "備考": { "type": "string" },
+              "完了条件": { "type": "string" },
+              "親プロジェクトID": { "type": ["string", "null"] },
+              "事業部領域": { "type": "array", "items": { "type": "string", "enum": ["セールス・マーケ", "EC", "生産管理", "経理・バックオフィス", "Salesforce・AI", "経営"] } }
+            }
+          },
+          "evidence": { "type": "string", "description": "根拠となる発言の要約" }
+        }
+      }
+    },
+    "open_questions": { "type": "array", "items": { "type": "string" }, "description": "聞き取れない箇所・不確かな固有名詞や数字" }
+  }
+};

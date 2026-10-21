@@ -1,18 +1,21 @@
 // config.js
 var Config_ = (function () {
   var defaults = { ENV: 'test', DRY_RUN: 'true', GENERATOR_MODE: 'CHATGPT',
-    NOTION_VERSION: '2025-09-03', TASK_DB_MODE: 'single', NOTION_MTG_URL_SOURCE: 'none' };
+    NOTION_VERSION: '2025-09-03', TASK_DB_MODE: 'single', NOTION_MTG_URL_SOURCE: 'none', NOTION_REQUESTER_TYPE: 'people' };
   // テスト対象を本番IDで代用しません。不明な値は安全側で拒否します。
   function inspect(values, profile) {
     var c = Object.assign({}, defaults, values), missing = [], errors = [];
-    var required = ['LEDGER_SPREADSHEET_ID', 'SHARED_DRIVE_ID', 'NOTION_TOKEN', 'NOTION_DB_TLDV_INBOX', 'CHATWORK_TOKEN'];
+    var required = ['LEDGER_SPREADSHEET_ID', 'NOTION_TOKEN', 'NOTION_DB_TLDV_INBOX'];
+    if (c.ENV !== 'test') required.push('SHARED_DRIVE_ID');
     if (!['test', 'prod'].includes(c.ENV)) errors.push('ENV は test または prod を指定してください。');
     if (!['true', 'false'].includes(c.DRY_RUN)) errors.push('DRY_RUN は true または false を指定してください。');
-    if (c.ENV !== 'test' || c.DRY_RUN !== 'true') errors.push('開発中は ENV=test、DRY_RUN=true が必要です。');
+    if (c.ENV !== 'test') errors.push('この開発環境はENV=test専用です。');
+    if (!['people', 'rich_text', 'email'].includes(c.NOTION_REQUESTER_TYPE)) errors.push('NOTION_REQUESTER_TYPE が不正です。');
     if (!['CHATGPT', 'OPENAI_API'].includes(c.GENERATOR_MODE)) errors.push('GENERATOR_MODE が不正です。');
     if (!['single', 'dual'].includes(c.TASK_DB_MODE)) errors.push('TASK_DB_MODE が不正です。');
     if (!['none', 'folder', 'meet'].includes(c.NOTION_MTG_URL_SOURCE)) errors.push('NOTION_MTG_URL_SOURCE が不正です。');
-    required = required.concat(['FOLDER_SYSTEM_TEST_ID', 'NOTION_DB_MINUTES_TEST', 'NOTION_DB_TASKS_TEST', 'CHATWORK_ROOM_ID_TEST']);
+    required = required.concat(['FOLDER_SYSTEM_TEST_ID', 'NOTION_DB_MINUTES_TEST', 'NOTION_DB_TASKS_TEST']);
+    if (c.CHATWORK_TOKEN) required.push('CHATWORK_ROOM_ID_TEST');
     if (c.GENERATOR_MODE === 'OPENAI_API') required = required.concat(['OPENAI_API_KEY', 'OPENAI_MODEL']);
     if (c.TASK_DB_MODE === 'dual') required.push('NOTION_DB_NONPROJECT_TEST');
     // Notionの読み取り確認は、まだ使わないChatworkやDriveの設定で止めません。
@@ -73,6 +76,7 @@ var DriveUtil_ = (function () {
     return matches[0];
   }
   function verifyTestRoot(c) {
+    if (!c.SHARED_DRIVE_ID) return Stage2Drive_.open(c).root;
     var root = Drive.Files.get(c.FOLDER_SYSTEM_TEST_ID, { supportsAllDrives: true, fields: 'id,name,parents,driveId,mimeType' });
     if (root.name !== '_test' || root.driveId !== c.SHARED_DRIVE_ID || root.mimeType !== folderMime || !root.parents || root.parents.length !== 1) throw new Error('テスト用フォルダを確認してください。');
     var parent = Drive.Files.get(root.parents[0], { supportsAllDrives: true, fields: 'id,name,driveId' });
@@ -81,6 +85,163 @@ var DriveUtil_ = (function () {
   }
   return { folders: folders, exact: exact, verifyTestRoot: verifyTestRoot };
 })();
+
+
+// inboxPlan.js
+var InboxPlan_ = (function () {
+  function mergeOptions(existing) {
+    var required = ['未処理', '取り込み済み', '対象外（Meet優先）', 'エラー'];
+    var names = existing.map(function (o) { return o.name; });
+    var added = required.filter(function (n) { return !names.includes(n); });
+    return { added: added, options: existing.map(function (o) {
+      var result = { name: o.name }; if (o.id) result.id = o.id; if (o.color) result.color = o.color; return result;
+    }).concat(added.map(function (name) { return { name: name }; })) };
+  }
+  // 提供されたJSON Schemaで使うキーワードをGAS内で検証します。外部コードは読み込みません。
+  function validate(value, schema, path) {
+    path = path || '$'; var errors = [], types = Array.isArray(schema.type) ? schema.type : [schema.type];
+    var type = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+    if (schema.type && !types.includes(type)) return [path + ': 型が不正です。'];
+    if (schema.enum && !schema.enum.includes(value)) errors.push(path + ': 選択肢が不正です。');
+    if (typeof value === 'string') {
+      if (schema.pattern && !new RegExp(schema.pattern).test(value)) errors.push(path + ': 形式が不正です。');
+      if (schema.maxLength && Array.from(value).length > schema.maxLength) errors.push(path + ': 長すぎます。');
+    }
+    if (type === 'object') {
+      (schema.required || []).forEach(function (key) { if (!Object.prototype.hasOwnProperty.call(value, key)) errors.push(path + '.' + key + ': 必須です。'); });
+      Object.keys(value).forEach(function (key) {
+        if (Object.prototype.hasOwnProperty.call(schema.properties || {}, key)) errors = errors.concat(validate(value[key], schema.properties[key], path + '.' + key));
+        else if (schema.additionalProperties === false) errors.push(path + '.' + key + ': 未定義の項目です。');
+      });
+    }
+    if (type === 'array') {
+      if (schema.uniqueItems && new Set(value.map(function (v) { return JSON.stringify(v); })).size !== value.length) errors.push(path + ': 重複があります。');
+      value.forEach(function (v, i) { if (schema.items) errors = errors.concat(validate(v, schema.items, path + '[' + i + ']')); });
+    }
+    return errors;
+  }
+  function judgement(input) {
+    var data = JSON.parse(JSON.stringify(input)), warnings = [], choices = ['セールス・マーケ', 'EC', '生産管理', '経理・バックオフィス', 'Salesforce・AI', '経営'];
+    if (Array.isArray(data.domains)) data.domains = data.domains.filter(function (d) { if (choices.includes(d)) return true; warnings.push('未定義の事業部領域を除外しました。'); return false; });
+    var errors = validate(data, InboxJudgementSchema_);
+    if (errors.length) throw new Error('判定JSONが不正です: ' + errors.join(' '));
+    return { data: data, warnings: warnings };
+  }
+  function safeName(value) {
+    var chars = { '\\': '＼', '/': '／', ':': '：', '*': '＊', '?': '？', '"': '＂', '<': '＜', '>': '＞', '|': '｜' };
+    return Array.from(String(value || '会議').replace(/[\\/:*?"<>|]/g, function (c) { return chars[c]; })).slice(0, 40).join('');
+  }
+  function card(row, reviewUrl) {
+    function clean(v) { return String(v || '').replace(/https?:\/\/[^\s<>]+/gi, '（URL省略）').replace(/\[/g, '［').replace(/\]/g, '］'); }
+    function date(value, timeOnly) {
+      var valueMs = Date.parse(value);
+      if (!Number.isFinite(valueMs)) return '日時：要確認';
+      var local = new Date(valueMs + 9 * 60 * 60 * 1000), iso = local.toISOString();
+      return timeOnly ? iso.slice(11, 16) : Number(iso.slice(5, 7)) + '/' + Number(iso.slice(8, 10)) + '(' + '日月火水木金土'[local.getUTCDay()] + ') ' + iso.slice(11, 16);
+    }
+    function values(value) { try { var data = JSON.parse(value || '[]'); return Array.isArray(data) ? data : []; } catch (e) { return []; } }
+    var body = '[info][title]【' + clean(row.status) + '】議事録の格納先を確認してください（' + clean(row.display_id) + '）[/title]\n' +
+      date(row.event_start, false) + '–' + date(row.event_end, true) + '　' + clean(row.title) + '（' + (row.source === 'meet' ? 'Meet' : row.source === 'tldv' ? 'tl;dv' : '記録元：要確認') + '）' +
+      '\nDrive：' + clean(row.placement_final).replace('/', ' ＞ ') + '\nNotion：' + clean(row.minutes_title) + '（' + clean(row.notion_status) + '）' +
+      '\n事業部領域：' + clean(values(row.domains_final).join('／') || '未設定') + '／関連PJ：' + values(row.related_project_ids_final).length + '件' +
+      '\n根拠：' + clean(row.reason) + '（確信度 ' + clean(row.confidence) + '）';
+    if (/^https:\/\/script\.google\.com\/(?:a\/macros\/[^/]+\/)?s\/[A-Za-z0-9_-]+\/exec$/.test(reviewUrl || '')) body += '\n確認画面：' + reviewUrl;
+    else body += '\n確認画面はまだ公開していません。';
+    return body + '[/info]';
+  }
+  return { mergeOptions: mergeOptions, validate: validate, judgement: judgement, safeName: safeName, card: card };
+})();
+
+
+// inboxSchema.generated.js
+// schemas/inbox_judgement.schema.jsonから生成します。
+var InboxJudgementSchema_ = {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "inbox_judgement.schema.json",
+  "title": "議事録の判定JSON（_system/inbox/{folder_key}.json）",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["meeting_key", "source", "scope", "placement", "domains", "related_project_ids", "minutes_title", "confidence", "reason", "sensitive", "summary", "task_proposals", "open_questions"],
+  "properties": {
+    "meeting_key": { "type": "string", "pattern": "^(meet|tldv):.+$", "description": "manifest.json の meeting_key をそのまま入れる" },
+    "source": { "type": "string", "enum": ["meet", "tldv"] },
+    "scope": { "type": "string", "enum": ["社内", "社外"] },
+    "placement": {
+      "type": "string",
+      "description": "格納先。社内は 社内/{部署}（部署は8つから）。社外は 社外/{顧客名}。顧客名が ref/masters.json の clients に無いときは末尾に（要確認）を付ける",
+      "pattern": "^(社内/(事業部全体|セールス・マーケ|EC|生産管理|経理・バックオフィス|Salesforce・AI|経営)|社外/.+)$"
+    },
+    "domains": {
+      "type": "array",
+      "description": "Notion の事業部領域。6つの選択肢の完全一致名だけ",
+      "items": { "type": "string", "enum": ["セールス・マーケ", "EC", "生産管理", "経理・バックオフィス", "Salesforce・AI", "経営"] },
+      "uniqueItems": true
+    },
+    "related_project_ids": {
+      "type": "array",
+      "description": "ref/projects.json にある Notion ページ ID だけ",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "minutes_title": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2} .+$" },
+    "minutes_doc_id": { "type": ["string", "null"], "description": "GENERATOR_MODE=CHATGPT のとき、inbox に作った議事録 Google ドキュメントの ID" },
+    "minutes_markdown": { "type": ["string", "null"], "description": "GENERATOR_MODE=OPENAI_API のとき、議事録本文（GAS が Doc にする）" },
+    "confidence": { "type": "string", "enum": ["高", "中", "低"] },
+    "reason": { "type": "string", "maxLength": 200, "description": "判定の根拠を1文で" },
+    "sensitive": { "type": "boolean", "description": "経営・人事・評価・健康など個人に関わる話題を含むか" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decisions", "next_actions"],
+      "properties": {
+        "decisions": { "type": "array", "items": { "type": "string" } },
+        "next_actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["who", "what", "due"],
+            "properties": {
+              "who": { "type": "string" },
+              "what": { "type": "string" },
+              "due": { "type": ["string", "null"], "description": "YYYY-MM-DD。不明は null" }
+            }
+          }
+        }
+      }
+    },
+    "task_proposals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "task_db", "target_id", "title", "requester_email", "assignee_email", "fields", "evidence"],
+        "properties": {
+          "type": { "type": "string", "enum": ["新規", "更新", "リンク"] },
+          "task_db": { "type": "string", "enum": ["プロジェクト", "非プロジェクト"] },
+          "target_id": { "type": ["string", "null"], "description": "更新・リンクのときは ref/projects.json のページ ID。新規は null" },
+          "title": { "type": "string" },
+          "requester_email": { "type": ["string", "null"] },
+          "assignee_email": { "type": ["string", "null"] },
+          "fields": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "ステータス": { "type": "string", "enum": ["未着手", "保留", "進行中", "対応不要", "完了"] },
+              "期日": { "type": ["string", "null"] },
+              "備考": { "type": "string" },
+              "完了条件": { "type": "string" },
+              "親プロジェクトID": { "type": ["string", "null"] },
+              "事業部領域": { "type": "array", "items": { "type": "string", "enum": ["セールス・マーケ", "EC", "生産管理", "経理・バックオフィス", "Salesforce・AI", "経営"] } }
+            }
+          },
+          "evidence": { "type": "string", "description": "根拠となる発言の要約" }
+        }
+      }
+    },
+    "open_questions": { "type": "array", "items": { "type": "string" }, "description": "聞き取れない箇所・不確かな固有名詞や数字" }
+  }
+};
 
 
 // ingestFixturesToNotionTest.js
@@ -100,7 +261,7 @@ function ingestFixturesToNotionTest() {
     });
     plans.forEach(function (item) {
       var key = 'NOTION_FIXTURE:' + NotionTestEnvironment_.normalize(minutes.databaseId) + ':' + item.meetingKey;
-      var saved = env.properties.getProperty(key), plan = item.plan;
+      var saved = env.properties.getProperty(key) || env.properties.getProperty('NOTION_PAGE:' + NotionTestEnvironment_.normalize(minutes.databaseId) + ':' + item.meetingKey), plan = item.plan;
       console.log('判定: ' + item.meetingKey + ' / ' + JSON.stringify(plan.placement));
       plan.warnings.forEach(function (w) { console.log(w); });
       console.log('タスク提案（書き込まない）: ' + JSON.stringify(plan.taskProposals));
@@ -133,6 +294,188 @@ function ingestFixturesToNotionTest() {
     console.log('サンプル取り込み結果: ' + JSON.stringify(results));
     return results;
   } finally { lock.releaseLock(); }
+}
+
+
+// ingestInbox.js
+var InboxIngest_ = (function () {
+  function hash(value) { return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, JSON.stringify(value), Utilities.Charset.UTF_8).map(function (b) { return ('0' + ((b + 256) % 256).toString(16)).slice(-2); }).join(''); }
+  function state(row) { return row && row.step_done_json ? JSON.parse(row.step_done_json) : {}; }
+  function run() {
+    var c = Stage2Drive_.config(), drive = Stage2Drive_.open(c);
+    drive.within(c.LEDGER_SPREADSHEET_ID);
+    if (c.CHATWORK_TOKEN && (!/^\d+$/.test(c.CHATWORK_ROOM_ID_TEST || '') || c.CHATWORK_ROOM_ID_TEST === c.CHATWORK_ROOM_ID)) throw new Error('Chatworkのテスト専用ルームIDが必要です。');
+    var ledger = Stage2Ledger_.open(SpreadsheetApp.openById(c.LEDGER_SPREADSHEET_ID)), masters = ledger.masters();
+    var env = NotionTestEnvironment_.open(true), minutes = env.schema(env.ids.minutes, 'minutes'), tasks = env.schema(env.ids.tasks, 'tasks');
+    var inbox = drive.folder(drive.root.id, 'inbox', false), done = drive.folder(inbox.id, '_done', false), raw = drive.folder(drive.root.id, '00_受信', false);
+    var rows = ledger.rows('minutes'), files = drive.children(inbox.id).filter(function (f) { return f.name.endsWith('.json'); });
+    rows.forEach(function (r) { var s = state(r); if (s.jsonId && !s.finished && !s.error && !files.some(function (f) { return f.id === s.jsonId; })) files.push(drive.within(s.jsonId)); });
+    files = files.filter(function (f) { return !rows.some(function (r) { var s = state(r); return s.jsonId === f.id && s.error && s.modifiedTime === f.modifiedTime; }); });
+    files.sort(function (a, b) { return String(a.createdTime || '').localeCompare(String(b.createdTime || '')) || a.id.localeCompare(b.id); });
+    var results = [], started = Date.now();
+    files.slice(0, c.INGEST_BATCH).forEach(function (file) {
+      if (Date.now() - started > 240000) return;
+      var row = null, steps = {}, key = 'invalid:' + file.id;
+      function save() { row.step_done_json = JSON.stringify(steps); ledger.save(row); }
+      try {
+        var parsed = InboxPlan_.judgement(drive.readJSON(file.id)), j = parsed.data; key = j.meeting_key;
+        if ((file.appProperties || {}).meeting_key && file.appProperties.meeting_key !== key) throw new Error('JSONファイルの会議マーカーと内容が一致しません。');
+        if (key.length > 180) throw new Error('会議キーが長すぎます。');
+        var prior = ledger.rows('minutes').find(function (r) { return r.meeting_key === key; });
+        if (prior && state(prior).jsonId !== file.id) throw new Error('同じmeeting_keyの別JSONがあります。既存の行は変更しません。');
+        row = prior || null; steps = state(row);
+        if (steps.hash && steps.hash !== hash(j)) throw new Error('取り込み中に判定JSONが変更されました。');
+        if (steps.finished) { results.push({ meeting_key: key, status: '取り込み済み' }); return; }
+        var folder = steps.rawFolderId ? drive.within(steps.rawFolderId) : drive.folder(raw.id, key.replace(/:/g, '_'), false);
+        var manifests = steps.manifestId ? [drive.within(steps.manifestId)] : drive.children(folder.id).filter(function (f) { return f.name === 'manifest.json'; });
+        if (manifests.length !== 1) throw new Error('manifest.jsonを1件に特定できません。');
+        var manifest = drive.readJSON(manifests[0].id);
+        if (manifest.status !== 'ready' || manifest.meeting_key !== key || manifest.source !== j.source || !Number.isFinite(Date.parse(manifest.start))) throw new Error('manifestの状態・会議キー・日時が不正です。');
+        var allowedKinds = ['recording', 'transcript', 'gemini', 'tldv_transcript'], rawFiles = [];
+        Object.keys(manifest.files || {}).forEach(function (kind) {
+          if (!allowedKinds.includes(kind)) throw new Error('manifestに未定義のファイル種別があります。');
+          if (manifest.source === 'tldv' && kind === 'recording') { console.log('tl;dvの録画は管理対象外のため移動しません。'); return; }
+          var f = drive.within(manifest.files[kind]);
+          if ((f.appProperties || {}).meeting_key && f.appProperties.meeting_key !== key) throw new Error('生データの会議マーカーが違います。');
+          if (f.mimeType === 'application/vnd.google-apps.folder' || !(f.parents || []).some(function (p) { return p === folder.id || row && p === row.meeting_folder_id; })) throw new Error('生データが会議の受信・格納フォルダ内にありません。');
+          rawFiles.push({ id: f.id, kind: kind });
+        });
+        var docId = steps.minutesDocId || j.minutes_doc_id, blocks;
+        if (docId) {
+          var doc = drive.within(docId);
+          if ((doc.appProperties || {}).meeting_key && doc.appProperties.meeting_key !== key) throw new Error('議事録Docの会議マーカーが違います。');
+          if (doc.mimeType !== 'application/vnd.google-apps.document' || !(doc.parents || []).some(function (p) { return p === inbox.id || row && p === row.meeting_folder_id; })) throw new Error('議事録Docがinbox・格納フォルダ内にありません。');
+          blocks = Stage2Content_.read(docId);
+        } else if (j.minutes_markdown) blocks = Stage2Content_.blocks(j.minutes_markdown.split('\n').map(function (text) { return { type: 'paragraph', text: text }; }));
+        else throw new Error('議事録Docまたはminutes_markdownが必要です。');
+        if (!blocks.length) throw new Error('議事録本文が空です。');
+        if (steps.contentHash && steps.contentHash !== hash(blocks)) throw new Error('取り込み中に議事録本文が変更されました。');
+        var projects = j.related_project_ids.map(function (id) { return env.project(id); }).filter(Boolean);
+        var plan = NotionFixturePlan_.plan(j, manifest, masters, minutes, tasks, projects); plan.payload.children = blocks;
+        var destination = plan.placement.placement === '00_仕分け待ち' ? drive.folder(drive.root.id, '00_仕分け待ち', false).id : (masters.folders.find(function (f) { return f.placement === plan.placement.placement; }) || {}).drive_folder_id;
+        if (!destination) throw new Error('格納先フォルダIDがマスタにありません。');
+        if (drive.within(destination).mimeType !== 'application/vnd.google-apps.folder') throw new Error('格納先がフォルダではありません。');
+        var registryKey = 'NOTION_PAGE:' + NotionTestEnvironment_.normalize(minutes.databaseId) + ':' + key;
+        var fixtureKey = 'NOTION_FIXTURE:' + NotionTestEnvironment_.normalize(minutes.databaseId) + ':' + key;
+        var recordText = env.properties.getProperty(registryKey) || env.properties.getProperty(fixtureKey), record = recordText ? JSON.parse(recordText) : null;
+        if (record && record.state === 'created' && record.pageId) env.verifyMinutesPage(record.pageId);
+        parsed.warnings.concat(plan.warnings).forEach(function (w) { console.log(w); });
+        console.log('タスク提案（書き込まない）: ' + JSON.stringify(j.task_proposals));
+        if (c.DRY_RUN === 'true') {
+          var planned = { meeting_key: key, status: plan.placement.status, display_id: row ? row.display_id : '採番予定', event_start: manifest.start, event_end: manifest.end, source: j.source, confidence: j.confidence, domains_final: JSON.stringify(plan.placement.domains), related_project_ids_final: JSON.stringify(plan.placement.related_project_ids), title: manifest.title, placement_final: plan.placement.placement, minutes_title: j.minutes_title, notion_status: record && record.pageId ? '既存ページ再利用' : '作成予定', reason: j.reason };
+          console.log('取り込み予定: ' + JSON.stringify(planned)); console.log('Notion送信予定: ' + JSON.stringify(plan.payload));
+          ledger.log('inbox取り込み予定', key, { row: planned, notion: plan.payload });
+          var card = InboxPlan_.card(planned, c.WEBAPP_URL); console.log('Chatwork投稿予定: ' + card); ledger.log('Chatwork投稿予定', key, card);
+          results.push({ meeting_key: key, status: plan.placement.status, dryRun: true }); return;
+        }
+        if (!row) {
+          row = { meeting_key: key, display_id: ledger.displayId(manifest.start), source: j.source, event_id: manifest.event_id || '', event_start: manifest.start, event_end: manifest.end || '', title: manifest.title,
+            organizer_email: manifest.organizer_email || '', attendees_json: JSON.stringify(manifest.attendees || []), scope_auto: plan.placement.rule.scope || '', scope_final: j.scope,
+            placement_auto: j.placement, placement_final: plan.placement.placement, domains_auto: JSON.stringify(j.domains), domains_final: JSON.stringify(plan.payload.properties['事業部領域'].multi_select.map(function (v) { return v.name; })),
+            related_project_ids_auto: JSON.stringify(j.related_project_ids), related_project_ids_final: JSON.stringify(plan.placement.related_project_ids), minutes_title: j.minutes_title,
+            confidence: j.confidence, reason: j.reason, sensitive: j.sensitive, conflict: plan.placement.conflicts.length > 0, status: plan.placement.status,
+            notion_status: '未処理', raw_file_ids_json: JSON.stringify(manifest.files || {}), created_at: new Date().toISOString(), last_error: parsed.warnings.concat(plan.warnings).join(' ') };
+          steps = { jsonId: file.id, rawFolderId: folder.id, manifestId: manifests[0].id, hash: hash(j), contentHash: hash(blocks), modifiedTime: file.modifiedTime };
+          save();
+        }
+        steps.error = false; row.status = plan.placement.status;
+        if (!row.meeting_folder_id) {
+          var name = Utilities.formatDate(new Date(manifest.start), 'Asia/Tokyo', 'yyyy-MM-dd_HHmm') + '_' + InboxPlan_.safeName(manifest.title);
+          var meetingFolder = drive.folder(destination, name, true, key); row.meeting_folder_id = meetingFolder.id; row.folder_id_final = destination; save();
+        }
+        if (!docId) {
+          var existingDocs = drive.children(inbox.id).filter(function (f) { return f.mimeType === 'application/vnd.google-apps.document' && (f.appProperties || {}).meeting_key === key && f.appProperties.kind === 'minutes'; });
+          if (existingDocs.length > 1) throw new Error('作成途中の議事録Docが複数あります。');
+          docId = existingDocs.length ? existingDocs[0].id : drive.createFile(inbox.id, key.replace(/:/g, '_') + '_議事録', Stage2Content_.html(j.minutes_markdown), 'application/vnd.google-apps.document', 'minutes', key).id;
+        }
+        steps.minutesDocId = docId; row.minutes_doc_id = docId; save();
+        if (!steps.moved) {
+          rawFiles.forEach(function (f) { drive.move(f.id, row.meeting_folder_id, f.kind, key); });
+          drive.move(docId, row.meeting_folder_id, 'minutes', key); drive.move(manifests[0].id, row.meeting_folder_id, 'manifest', key);
+          steps.moved = true; save();
+        }
+        if (!row.notion_page_id && record && record.state === 'created' && record.pageId) {
+          row.notion_page_id = record.pageId; steps.notionComplete = true; steps.reusedPage = true; row.notion_status = '作成済み（再利用）'; save();
+        }
+        if (!row.notion_page_id) {
+          if (record && record.state === 'pending' || steps.notion === 'pending') throw new Error('Notion作成結果が不明です。記録を消さず、実Notionを確認してください。');
+          steps.notion = 'pending'; env.properties.setProperty(registryKey, JSON.stringify({ state: 'pending' })); save();
+          try {
+            var payload = Object.assign({}, plan.payload, { children: blocks.slice(0, 100) }), page = env.createPage(payload);
+            if (!page.id) throw new Error('Notion作成結果にページIDがありません。');
+            console.log('作成したNotionページ: ' + key + ' / ' + page.id);
+            row.notion_page_id = page.id; steps.notion = 'created'; steps.nextBlock = Math.min(100, blocks.length); save();
+            env.properties.setProperty(registryKey, JSON.stringify({ state: 'created', pageId: page.id }));
+          } catch (e) {
+            if (e.httpStatus !== 403) throw e;
+            env.properties.setProperty(registryKey, JSON.stringify({ state: 'rejected', httpStatus: 403 }));
+            steps.notion = 'rejected'; row.notion_status = 'Notion保留'; row.last_error = e.message; save();
+          }
+        }
+        if (row.notion_page_id && !steps.notionComplete) {
+          env.verifyMinutesPage(row.notion_page_id);
+          if (steps.appendPending) throw new Error('本文追加の結果が不明です。二重追記しません。');
+          while (steps.nextBlock < blocks.length) {
+            if (Date.now() - started > 240000) { save(); results.push({ meeting_key: key, status: '本文追加の続き待ち' }); return; }
+            steps.appendPending = true; save();
+            try { env.appendBlocks(row.notion_page_id, blocks.slice(steps.nextBlock, steps.nextBlock + 100)); }
+            catch (e) { if (e.httpStatus === 403) { steps.appendPending = false; row.notion_status = 'Notion保留'; save(); } throw e; }
+            steps.nextBlock += Math.min(100, blocks.length - steps.nextBlock); steps.appendPending = false; save();
+          }
+          steps.notionComplete = true; row.notion_status = '作成済み'; save();
+        }
+        if (!c.CHATWORK_TOKEN && (!steps.chatwork || steps.chatwork === 'log_only')) {
+          var plannedCard = InboxPlan_.card(row, c.WEBAPP_URL);
+          if (steps.cardHash !== hash(plannedCard)) { console.log('Chatwork投稿予定（トークン未設定）: ' + plannedCard); ledger.log('Chatwork投稿予定（トークン未設定）', key, plannedCard); steps.cardHash = hash(plannedCard); }
+          steps.chatwork = 'log_only'; save();
+        } else if (!steps.chatwork) {
+          var body = InboxPlan_.card(row, c.WEBAPP_URL);
+          if (!c.CHATWORK_TOKEN) {
+            console.log('Chatwork投稿予定（トークン未設定）: ' + body); ledger.log('Chatwork投稿予定（トークン未設定）', key, body); steps.chatwork = 'log_only'; save();
+          } else {
+            steps.chatwork = 'pending'; save();
+            var response = UrlFetchApp.fetch('https://api.chatwork.com/v2/rooms/' + c.CHATWORK_ROOM_ID_TEST + '/messages', { method: 'post', headers: { 'X-ChatWorkToken': c.CHATWORK_TOKEN }, payload: { body: body, self_unread: '0' }, muteHttpExceptions: true });
+            if (response.getResponseCode() < 200 || response.getResponseCode() >= 300) throw new Error('Chatwork投稿: HTTP ' + response.getResponseCode());
+            var sent = JSON.parse(response.getContentText()); if (!sent.message_id) throw new Error('ChatworkのメッセージIDがありません。');
+            row.chatwork_message_id = sent.message_id; steps.chatwork = 'sent'; save();
+          }
+        } else if (steps.chatwork === 'pending') throw new Error('Chatwork投稿結果が不明です。二重投稿しません。');
+        if (!steps.jsonDone) { drive.move(file.id, done.id, 'judgement', key); steps.jsonDone = true; save(); }
+        if (!steps.rawDone) {
+          if (!drive.children(folder.id).length) {
+            var excluded = drive.folder(drive.root.id, '99_対象外', false), empty = drive.folder(excluded.id, '_空', false); drive.move(folder.id, empty.id, '', key);
+          } else console.log('受信フォルダに追加ファイルが残るため移動しません: ' + key);
+          steps.rawDone = true; save();
+        }
+        if (!ledger.rows('change_log').some(function (r) { return r.change_id === 'ingest:' + key; })) ledger.append('change_log', { change_id: 'ingest:' + key, at: new Date().toISOString(), meeting_key: key, kind: '取り込み', target: row.meeting_folder_id, after_json: JSON.stringify({ status: row.status, notion_status: row.notion_status }), actor: 'GAS-A（テスト）', result: '完了' });
+        steps.finished = !!steps.notionComplete; save(); results.push({ meeting_key: key, status: row.status, notion_status: row.notion_status, pageId: row.notion_page_id || null });
+      } catch (e) {
+        var message = String(e.message || '不明なエラー');
+        [c.NOTION_TOKEN, c.CHATWORK_TOKEN].filter(Boolean).forEach(function (secret) { message = message.split(secret).join('[非表示]'); });
+        console.log('取り込みエラー: ' + key + ' / ' + message); ledger.log('取り込みエラー', key, message);
+        if (c.DRY_RUN === 'false') {
+          if (!row) row = ledger.rows('minutes').find(function (r) { return r.meeting_key === 'invalid:' + file.id; }) || { meeting_key: 'invalid:' + file.id, created_at: new Date().toISOString() };
+          steps.error = true; steps.jsonId = file.id; steps.modifiedTime = file.modifiedTime; row.status = '要対応'; row.last_error = message; save();
+        }
+        results.push({ meeting_key: key, status: '要対応', error: message });
+      }
+    });
+    console.log('inbox取り込み結果: ' + JSON.stringify(results)); return results;
+  }
+  return { run: run };
+})();
+
+function ingestInbox() { return Ledger_.withLock(InboxIngest_.run); }
+
+function retryInboxErrors() {
+  return Ledger_.withLock(function () {
+    var c = Stage2Drive_.config(), drive = Stage2Drive_.open(c); drive.within(c.LEDGER_SPREADSHEET_ID);
+    var ledger = Stage2Ledger_.open(SpreadsheetApp.openById(c.LEDGER_SPREADSHEET_ID));
+    ledger.rows('minutes').forEach(function (r) {
+      if (!r.step_done_json) return; var steps = JSON.parse(r.step_done_json);
+      if (steps.error) { console.log('再検査予定: ' + r.meeting_key); if (c.DRY_RUN === 'false') { steps.error = false; r.step_done_json = JSON.stringify(steps); ledger.save(r); } }
+    });
+  });
 }
 
 
@@ -295,14 +638,18 @@ var NotionFixturePlan_ = (function () {
     // タイトル名や参加者形式は実機確認対象です。本文の文字起こしも許容します。
     inbox: { '取り込み状態': ['select'], 'meeting_key': ['rich_text'], '日付': ['date'], '会議URL': ['url'], '長さ': ['number', 'rich_text'], '参加者': ['rich_text', 'people', 'multi_select'], 'AIメモ': ['rich_text'], 'トランスクリプト': ['rich_text'] }
   };
-  function compareSchema(key, properties) {
-    var differences = [], wanted = expected[key];
+  function compareSchema(key, properties, requesterType) {
+    requesterType = requesterType || 'people';
+    if (!['people', 'rich_text', 'email'].includes(requesterType)) throw new Error('NOTION_REQUESTER_TYPE が不正です。');
+    var differences = [], knownAdditions = [], wanted = Object.assign({}, expected[key]);
+    if (key === 'tasks') wanted['依頼者'] = [requesterType];
     Object.keys(wanted).forEach(function (name) {
       var p = properties[name], optionalBody = key === 'inbox' && ['AIメモ', 'トランスクリプト'].includes(name);
       if (!p || !wanted[name].includes(p.type)) differences.push({ kind: optionalBody ? '本文での提供可・要確認' : '項目名・型', name: name, expected: wanted[name], actual: p ? p.type : '未設定' });
     });
     Object.keys(properties).filter(function (name) { return !wanted[name] && !(key === 'inbox' && properties[name].type === 'title'); }).forEach(function (name) {
-      differences.push({ kind: key === 'tasks' && name === '依頼者' ? 'SPECで型未決定' : '追加項目', name: name, actual: properties[name].type });
+      if (key === 'tasks' && ['関連プロジェクト（参照元）', 'サブアイテム', '関連プロジェクト'].includes(name)) knownAdditions.push({ name: name, type: properties[name].type });
+      else differences.push({ kind: '追加項目', name: name, actual: properties[name].type });
     });
     if (key === 'inbox' && !Object.keys(properties).some(function (n) { return properties[n].type === 'title'; })) differences.push({ kind: '項目名・型', name: 'タイトル', expected: ['title'], actual: '未設定' });
     function options(name, values) {
@@ -316,7 +663,7 @@ var NotionFixturePlan_ = (function () {
     if (key !== 'inbox') options('事業部領域', domains);
     if (key === 'tasks') options('ステータス', ['未着手', '保留', '進行中', '対応不要', '完了']);
     if (key === 'inbox') options('取り込み状態', ['未処理', '取り込み済み', '対象外（Meet優先）', 'エラー']);
-    return { properties: Object.keys(properties).map(function (n) { return { name: n, type: properties[n].type }; }), differences: differences };
+    return { properties: Object.keys(properties).map(function (n) { return { name: n, type: properties[n].type }; }), differences: differences, knownAdditions: knownAdditions };
   }
   function clean(value) { return String(value || '').replace(/https?:\/\/[^\s<>]+/gi, '（URL省略）'); }
   function richText(value) {
@@ -640,7 +987,7 @@ var NotionTestEnvironment_ = (function () {
   var parent = '400ca178-7419-80e8-bb9a-f157874b6105';
   var ids = { minutes: 'd9cc47f9-543e-4bcb-8ec8-27bebc0feac5', tasks: 'c908936a-6999-4119-9e9c-df364f5f5d1b' };
   function normalize(value) { return String(value || '').replace(/-/g, '').toLowerCase(); }
-  function open(writingWorkflow) {
+  function open(writingWorkflow, purpose) {
     var properties = PropertiesService.getScriptProperties();
     if (properties.getProperty('ENV') !== 'test') throw new Error('ENV=test が必要です。');
     var dryRun = properties.getProperty('DRY_RUN');
@@ -651,11 +998,14 @@ var NotionTestEnvironment_ = (function () {
       var name = k === 'minutes' ? 'NOTION_DB_MINUTES_TEST' : 'NOTION_DB_TASKS_TEST';
       if (normalize(properties.getProperty(name)) !== normalize(ids[k])) throw new Error(name + ' が確認済みテストDBのIDと一致しません。');
     });
-    var verified = {};
+    var verified = {}, allowedPages = new Set(), inboxPatch = null;
     function request(method, path, body, optionalStatuses) {
       if (method !== 'get') {
-        if (!writingWorkflow || dryRun !== 'false' || method !== 'post' || path !== 'pages' || !verified.minutes || !verified.tasks ||
-            !body.parent || body.parent.type !== 'data_source_id' || normalize(body.parent.data_source_id) !== normalize(verified.minutes.sourceId)) throw new Error('テスト議事録DBへのページ作成以外は禁止です。');
+        var create = method === 'post' && path === 'pages' && verified.minutes && verified.tasks && body.parent && body.parent.type === 'data_source_id' && normalize(body.parent.data_source_id) === normalize(verified.minutes.sourceId);
+        var append = /^blocks\/([^/]+)\/children$/.exec(path);
+        var appendAllowed = method === 'patch' && append && allowedPages.has(normalize(append[1])) && body.children && body.children.length <= 100;
+        var optionAllowed = purpose === 'inbox-options' && inboxPatch && method === 'patch' && path === inboxPatch.path && JSON.stringify(body) === inboxPatch.body;
+        if (!writingWorkflow || dryRun !== 'false' || !(create || appendAllowed || optionAllowed)) throw new Error('確認済みテスト対象以外への書き込みは禁止です。');
       }
       var options = { method: method, headers: { Authorization: 'Bearer ' + token, 'Notion-Version': '2025-09-03' }, muteHttpExceptions: true };
       if (body) { options.contentType = 'application/json'; options.payload = JSON.stringify(body); }
@@ -667,7 +1017,7 @@ var NotionTestEnvironment_ = (function () {
       try { data = JSON.parse(response.getContentText()); } catch (e) { throw new Error('NotionからJSON以外の応答が返りました。HTTP ' + status); }
       if (status < 200 || status >= 300) {
         if ((optionalStatuses || []).includes(status)) return null;
-        throw new Error('Notionテスト接続: HTTP ' + status + ' / ' + String(data.code || '不明'));
+        var error = new Error('Notionテスト接続: HTTP ' + status + ' / ' + String(data.code || '不明')); error.httpStatus = status; throw error;
       }
       return data;
     }
@@ -703,8 +1053,30 @@ var NotionTestEnvironment_ = (function () {
       return page.parent.type === 'data_source_id' && normalize(page.parent.data_source_id) === normalize(verified.tasks.sourceId) ||
         page.parent.type === 'database_id' && normalize(page.parent.database_id) === normalize(ids.tasks) ? page.id : null;
     }
-    function createPage(payload) { return request('post', 'pages', payload); }
+    function verifyMinutesPage(id) {
+      var page = request('get', 'pages/' + encodeURIComponent(id));
+      if (!verified.minutes || page.archived || page.in_trash || !page.parent || !(page.parent.type === 'data_source_id' && normalize(page.parent.data_source_id) === normalize(verified.minutes.sourceId) || page.parent.type === 'database_id' && normalize(page.parent.database_id) === normalize(ids.minutes))) throw new Error('記録済みページがテスト議事録DBに属していません。');
+      allowedPages.add(normalize(page.id)); return page;
+    }
+    function createPage(payload) { var page = request('post', 'pages', payload); if (page.id) allowedPages.add(normalize(page.id)); return page; }
+    function appendBlocks(id, children) { return request('patch', 'blocks/' + id + '/children', { children: children }); }
+    function addInboxOptions() {
+      if (purpose !== 'inbox-options') throw new Error('選択肢追加専用の呼び出しではありません。');
+      var inbox = discoverInbox();
+      if (normalize(inbox.databaseId) !== normalize('400ca178-7419-80dd-a3e0-ef9e2267a64c') || normalize(properties.getProperty('NOTION_DB_TLDV_INBOX')) !== normalize(inbox.databaseId)) throw new Error('確認済みtl;dv受信DBのIDが必要です。');
+      var property = inbox.properties['取り込み状態'];
+      if (!property || property.type !== 'select') throw new Error('取り込み状態はselect型が必要です。');
+      var plan = InboxPlan_.mergeOptions(property.select.options || []);
+      console.log('取り込み状態の追加予定: ' + JSON.stringify(plan.added));
+      if (dryRun === 'true' || !plan.added.length) return { added: plan.added, dryRun: dryRun === 'true' };
+      var body = { properties: { '取り込み状態': { type: 'select', select: { options: plan.options } } } };
+      inboxPatch = { path: 'data_sources/' + inbox.sourceId, body: JSON.stringify(body) };
+      request('patch', inboxPatch.path, body); inboxPatch = null;
+      console.log('不足していた選択肢だけを追加しました。');
+      return { added: plan.added, dryRun: false };
+    }
     return { properties: properties, dryRun: dryRun === 'true', schema: schema, inbox: discoverInbox, project: project, createPage: createPage,
+      verifyMinutesPage: verifyMinutesPage, appendBlocks: appendBlocks, addInboxOptions: addInboxOptions,
       ids: { minutes: ids.minutes, tasks: ids.tasks } };
   }
   return { open: open, normalize: normalize };
@@ -713,10 +1085,11 @@ var NotionTestEnvironment_ = (function () {
 function checkTestEnvironment() {
   var env = NotionTestEnvironment_.open(false), report = { databases: [], differences: [], inboxId: null };
   function inspect(key, schema) {
-    var comparison = NotionFixturePlan_.compareSchema(key, schema.properties);
+    var comparison = NotionFixturePlan_.compareSchema(key, schema.properties, env.properties.getProperty('NOTION_REQUESTER_TYPE') || 'people');
     report.databases.push({ name: key, databaseId: schema.databaseId, properties: comparison.properties });
     comparison.differences.forEach(function (d) { report.differences.push(Object.assign({ database: key }, d)); });
     console.log('項目名・型: ' + key + ' / ' + JSON.stringify(comparison.properties));
+    if (comparison.knownAdditions.length) console.log('既知の追加項目（書き込みには使いません）: ' + JSON.stringify(comparison.knownAdditions));
   }
   inspect('minutes', env.schema(env.ids.minutes, 'minutes'));
   inspect('tasks', env.schema(env.ids.tasks, 'tasks'));
@@ -727,9 +1100,11 @@ function checkTestEnvironment() {
     console.log('NOTION_DB_TLDV_INBOX = ' + inbox.databaseId + ' をスクリプトプロパティに登録してください。');
   } catch (e) { report.differences.push({ database: 'inbox', kind: '取得失敗', message: e.message }); }
   console.log('SPECとの差分一覧: ' + JSON.stringify(report.differences));
-  console.log('依頼者の型・tl;dvの参加者形式などSPECで未確定の部分は参考として表示します。設定・Notionへの書き込みは行っていません。');
+  console.log('依頼者はNOTION_REQUESTER_TYPE（既定people）で照合します。設定・Notionへの書き込みは行っていません。');
   return report;
 }
+
+function addTldvInboxStatusOptions() { return Ledger_.withLock(function () { return NotionTestEnvironment_.open(true, 'inbox-options').addInboxOptions(); }); }
 
 
 // setup.js
@@ -928,6 +1303,260 @@ var TestDbSetup_ = (function () {
 })();
 
 function setupTestDatabases() { return TestDbSetup_.run(); }
+
+
+// stage2Content.js
+var Stage2Content_ = (function () {
+  function clean(value) { return String(value || '').replace(/https?:\/\/[^\s<>]+/gi, '（URL省略）'); }
+  function rich(value) {
+    var chars = Array.from(clean(value)), result = [];
+    for (var i = 0; i < chars.length; i += 1000) result.push({ type: 'text', text: { content: chars.slice(i, i + 1000).join('') } });
+    if (result.length > 100) throw new Error('本文の1段落が長すぎます。');
+    return result;
+  }
+  function blocks(elements) {
+    var result = [];
+    elements.forEach(function (e) {
+      if (e.type === 'table') {
+        if (!e.rows.length) return;
+        var width = e.rows[0].length;
+        if (!width || e.rows.some(function (r) { return r.length !== width; })) throw new Error('表の列数が不正です。');
+        for (var i = 0; i < e.rows.length; i += 100) result.push({ object: 'block', type: 'table', table: {
+          table_width: width, has_column_header: true, has_row_header: false,
+          children: e.rows.slice(i, i + 100).map(function (r) { return { object: 'block', type: 'table_row', table_row: { cells: r.map(rich) } }; })
+        } });
+      } else {
+        var type = ['heading_2', 'heading_3', 'bulleted_list_item', 'numbered_list_item'].includes(e.type) ? e.type : 'paragraph';
+        if (!e.text) return;
+        var b = { object: 'block', type: type }; b[type] = { rich_text: rich(e.text) }; result.push(b);
+      }
+    });
+    for (var offset = 0; offset < result.length; offset += 100) {
+      if (JSON.stringify(result.slice(offset, offset + 100)).length * 3 > 450000) throw new Error('本文がNotionのリクエスト上限に近いため処理を止めました。');
+    }
+    return result;
+  }
+  function read(id) {
+    var body = DocumentApp.openById(id).getBody(), elements = [];
+    for (var i = 0; i < body.getNumChildren(); i++) {
+      var child = body.getChild(i), type = String(child.getType());
+      if (type === 'TABLE') {
+        var table = child.asTable(), rows = [];
+        for (var r = 0; r < table.getNumRows(); r++) {
+          var row = table.getRow(r), cells = [];
+          for (var c = 0; c < row.getNumCells(); c++) cells.push(row.getCell(c).getText());
+          rows.push(cells);
+        }
+        elements.push({ type: 'table', rows: rows });
+      } else if (type === 'PARAGRAPH') {
+        var paragraph = child.asParagraph(), heading = String(paragraph.getHeading());
+        elements.push({ type: heading === 'HEADING2' || heading === 'HEADING1' ? 'heading_2' : heading === 'HEADING3' ? 'heading_3' : 'paragraph', text: paragraph.getText() });
+      } else if (type === 'LIST_ITEM') {
+        var item = child.asListItem(); elements.push({ type: /NUMBER|LATIN|ROMAN/.test(String(item.getGlyphType())) ? 'numbered_list_item' : 'bulleted_list_item', text: item.getText() });
+      } else throw new Error('未対応の議事録要素があります: ' + type);
+    }
+    return blocks(elements);
+  }
+  function html(text) { return '<html><body><p>' + String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '</p><p>') + '</p></body></html>'; }
+  return { blocks: blocks, read: read, html: html };
+})();
+
+function seedFixtureInbox() {
+  return Ledger_.withLock(function () {
+    var c = Stage2Drive_.config(), drive = Stage2Drive_.open(c);
+    drive.within(c.LEDGER_SPREADSHEET_ID);
+    var ledger = Stage2Ledger_.open(SpreadsheetApp.openById(c.LEDGER_SPREADSHEET_ID));
+    if (c.DRY_RUN === 'true') { ledger.log('サンプル準備予定', 'inbox', '判定JSON・manifest・議事録Doc・ダミー文字起こしを3件準備します。'); return; }
+    var raw = drive.folder(drive.root.id, '00_受信', false), inbox = drive.folder(drive.root.id, 'inbox', false), done = drive.folder(inbox.id, '_done', false);
+    function ensure(parent, name, text, mime, kind, key) {
+      var matches = drive.children(parent).filter(function (f) { return f.name === name; });
+      if (matches.length > 1) throw new Error('同名サンプルが複数あります: ' + name);
+      if (matches.length && (matches[0].appProperties || {}).meeting_key !== key) throw new Error('既存ファイルは上書きしません: ' + name);
+      return matches[0] || drive.createFile(parent, name, text, mime, kind, key);
+    }
+    NotionFixtures_.judgements.forEach(function (original) {
+      var j = JSON.parse(JSON.stringify(original)), key = j.meeting_key, folderKey = key.replace(/:/g, '_');
+      if (ledger.rows('minutes').some(function (r) { return r.meeting_key === key; }) || drive.children(done.id).some(function (f) { return f.name === folderKey + '.json'; })) { console.log('準備済み・処理済みのサンプルは再投入しません: ' + key); return; }
+      var folder = drive.folder(raw.id, folderKey, true), manifest = JSON.parse(JSON.stringify(NotionFixtures_.manifests.find(function (m) { return m.meeting_key === key; })));
+      var text = '基本情報\n' + manifest.title + '\n決定事項\n' + j.summary.decisions.join('\n') + '\nネクストアクション\n' + j.summary.next_actions.map(function (a) { return a.who + '／' + a.what + '／' + (a.due || '期日：要確認'); }).join('\n');
+      var minutes = ensure(inbox.id, folderKey + '_議事録', Stage2Content_.html(text), 'application/vnd.google-apps.document', 'minutes', key);
+      var kind = manifest.source === 'tldv' ? 'tldv_transcript' : 'transcript';
+      var transcript = ensure(folder.id, '文字起こし（検証用ダミー）', Stage2Content_.html('これは検証専用のダミー文字起こしです。\n' + text), 'application/vnd.google-apps.document', kind, key);
+      manifest.files = {}; manifest.files[kind] = transcript.id; manifest.missing = manifest.source === 'meet' ? ['recording', 'gemini'] : [];
+      ensure(folder.id, 'manifest.json', JSON.stringify(manifest), 'application/json', 'manifest', key);
+      j.minutes_doc_id = minutes.id;
+      ensure(inbox.id, folderKey + '.json', JSON.stringify(j), 'application/json', 'judgement', key);
+      console.log('サンプルを準備しました: ' + key);
+    });
+  });
+}
+
+
+// stage2Drive.js
+var Stage2Drive_ = (function () {
+  var folderMime = 'application/vnd.google-apps.folder';
+  function config() {
+    var c = PropertiesService.getScriptProperties().getProperties();
+    if (c.ENV !== 'test' || !['true', 'false'].includes(c.DRY_RUN)) throw new Error('ENV=testと明示的なDRY_RUNが必要です。');
+    c.INGEST_BATCH = Number(c.INGEST_BATCH || 5);
+    if (!Number.isInteger(c.INGEST_BATCH) || c.INGEST_BATCH < 1 || c.INGEST_BATCH > 10) throw new Error('INGEST_BATCHは1〜10です。');
+    return c;
+  }
+  function escape(s) { return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+  function meta(id) { return Drive.Files.get(id, { supportsAllDrives: true, fields: 'id,name,mimeType,parents,driveId,trashed,ownedByMe,appProperties,createdTime,modifiedTime' }); }
+  function list(parent, c, query) {
+    var all = [], token;
+    do {
+      var args = { q: "'" + escape(parent) + "' in parents and trashed=false" + (query ? ' and ' + query : ''), supportsAllDrives: true, includeItemsFromAllDrives: true, fields: 'nextPageToken,files(id,name,mimeType,parents,createdTime,modifiedTime,appProperties)', pageSize: 100 };
+      if (c.SHARED_DRIVE_ID) { args.corpora = 'drive'; args.driveId = c.SHARED_DRIVE_ID; }
+      else args.corpora = 'user';
+      if (token) args.pageToken = token;
+      var page = Drive.Files.list(args); all = all.concat(page.files || []); token = page.nextPageToken;
+    } while (token);
+    return all;
+  }
+  function open(c) {
+    if (c.ENV !== 'test' || !c.TEST_ENV_KEY || !c.FOLDER_SYSTEM_TEST_ID) throw new Error('setupTestWorkspaceでテスト環境を作成してください。');
+    var root = meta(c.FOLDER_SYSTEM_TEST_ID);
+    function marker(m, kind) { return m.appProperties && m.appProperties.minutes_test_env === c.TEST_ENV_KEY && (!kind || m.appProperties.kind === kind); }
+    if (root.trashed || root.mimeType !== folderMime || root.name !== '_test' || !marker(root, 'test_root')) throw new Error('初期化済みテストルートではありません。');
+    if (c.SHARED_DRIVE_ID ? root.driveId !== c.SHARED_DRIVE_ID : root.driveId || !root.ownedByMe) throw new Error('テストDriveの所属が違います。');
+    var system = root.parents && root.parents.length === 1 && meta(root.parents[0]);
+    if (!system || system.name !== '_system' || !marker(system, 'system')) throw new Error('_system/_testではありません。');
+    function within(id) {
+      var file = meta(id), cursor = file, visited = new Set();
+      for (var depth = 0; depth < 30; depth++) {
+        if (cursor.trashed || cursor.mimeType === 'application/vnd.google-apps.shortcut') throw new Error('削除済みファイル・ショートカットは処理できません。');
+        if (cursor.id === root.id) return file;
+        if (!cursor.parents || cursor.parents.length !== 1 || visited.has(cursor.id)) break;
+        visited.add(cursor.id); cursor = cursor.parents[0] === root.id ? root : meta(cursor.parents[0]);
+      }
+      throw new Error('テストルート外のファイル操作は禁止です。');
+    }
+    function write() { if (c.DRY_RUN !== 'false') throw new Error('DRY_RUN中のDrive書き込みは禁止です。'); }
+    function children(id) { within(id); return list(id, c); }
+    function folder(parent, name, create, meetingKey) {
+      within(parent);
+      var matches = children(parent).filter(function (m) { return m.mimeType === folderMime && (meetingKey ? (m.appProperties || {}).meeting_key === meetingKey : m.name === name); });
+      if (matches.length > 1) throw new Error('同名・同キーのフォルダが複数あります: ' + name);
+      if (matches.length) return matches[0];
+      if (!create) throw new Error('フォルダがありません: ' + name);
+      write(); var app = { minutes_test_env: c.TEST_ENV_KEY }; if (meetingKey) app.meeting_key = meetingKey;
+      return Drive.Files.create({ name: name, mimeType: folderMime, parents: [parent], appProperties: app }, null, { supportsAllDrives: true, fields: 'id,name,mimeType,parents,appProperties' });
+    }
+    function move(id, destination, kind, meetingKey) {
+      write(); var m = within(id); within(destination);
+      var app = Object.assign({}, m.appProperties || {});
+      if (app.meeting_key && meetingKey && app.meeting_key !== meetingKey) throw new Error('別会議に属するファイルです。');
+      if (kind) app.kind = kind; if (meetingKey) app.meeting_key = meetingKey;
+      var args = { supportsAllDrives: true, fields: 'id,name,parents' };
+      if (!(m.parents || []).includes(destination)) { args.addParents = destination; args.removeParents = (m.parents || []).join(','); }
+      return Drive.Files.update({ appProperties: app }, id, null, args);
+    }
+    function createFile(parent, name, content, mime, kind, meetingKey) {
+      write(); within(parent);
+      var app = { minutes_test_env: c.TEST_ENV_KEY, kind: kind }; if (meetingKey) app.meeting_key = meetingKey;
+      var body = { name: name, mimeType: mime, parents: [parent], appProperties: app };
+      var inputMime = mime === 'application/vnd.google-apps.document' ? 'text/html' : mime;
+      return Drive.Files.create(body, Utilities.newBlob(content, inputMime, name), { supportsAllDrives: true, fields: 'id,name,mimeType,parents,appProperties' });
+    }
+    function readJSON(id) {
+      var m = within(id); if (m.mimeType !== 'application/json' && !m.name.endsWith('.json')) throw new Error('JSONファイルではありません。');
+      return JSON.parse(DriveApp.getFileById(id).getBlob().getDataAsString('UTF-8'));
+    }
+    return { root: root, within: within, children: children, folder: folder, move: move, createFile: createFile, readJSON: readJSON };
+  }
+  function setup() {
+    var c = config(), properties = PropertiesService.getScriptProperties();
+    if (c.SHARED_DRIVE_ID) throw new Error('この準備関数はマイドライブ専用です。SHARED_DRIVE_IDを空にしてください。');
+    if (c.DRY_RUN === 'true') { console.log('準備予定：マイドライブに開発専用フォルダ/_system/_test、受信・inbox・格納先・テスト台帳を作成します。'); return; }
+    if (!c.TEST_ENV_KEY) { c.TEST_ENV_KEY = Utilities.getUuid(); properties.setProperty('TEST_ENV_KEY', c.TEST_ENV_KEY); }
+    function ensure(parent, name, kind) {
+      var matches = list(parent, c, "mimeType='" + folderMime + "'").filter(function (f) { return (f.appProperties || {}).minutes_test_env === c.TEST_ENV_KEY && (f.appProperties || {}).kind === kind; });
+      if (matches.length > 1) throw new Error('テスト準備の同一マーカーが複数あります。');
+      return matches[0] || Drive.Files.create({ name: name, mimeType: folderMime, parents: [parent], appProperties: { minutes_test_env: c.TEST_ENV_KEY, kind: kind } }, null, { supportsAllDrives: true, fields: 'id,name,parents' });
+    }
+    var top = ensure('root', 'MTG議事録自動化（開発専用）', 'top'), system = ensure(top.id, '_system', 'system'), root = ensure(system.id, '_test', 'test_root');
+    if (c.FOLDER_SYSTEM_TEST_ID && c.FOLDER_SYSTEM_TEST_ID !== root.id) throw new Error('既存のFOLDER_SYSTEM_TEST_IDは上書きしません。');
+    c.FOLDER_SYSTEM_TEST_ID = root.id; properties.setProperty('FOLDER_SYSTEM_TEST_ID', root.id);
+    var drive = open(c), raw = drive.folder(root.id, '00_受信', true), inbox = drive.folder(root.id, 'inbox', true);
+    drive.folder(inbox.id, '_done', true); drive.folder(root.id, 'ref', true); drive.folder(root.id, '00_仕分け待ち', true);
+    var excluded = drive.folder(root.id, '99_対象外', true); drive.folder(excluded.id, '_空', true);
+    var internal = drive.folder(root.id, '社内', true), external = drive.folder(root.id, '社外', true), folderRows = [];
+    NotionFixtures_.masters.folders.forEach(function (r) { var name = r.placement.slice(3), f = drive.folder(internal.id, name, true); folderRows.push(Object.assign({}, r, { drive_folder_id: f.id })); });
+    var clientRows = NotionFixtures_.masters.clients.map(function (r) { return Object.assign({}, r, { drive_folder_id: drive.folder(external.id, r.client_name.replace(/\//g, '・'), true).id }); });
+    var book;
+    if (c.LEDGER_SPREADSHEET_ID) { drive.within(c.LEDGER_SPREADSHEET_ID); book = SpreadsheetApp.openById(c.LEDGER_SPREADSHEET_ID); }
+    else {
+      var existing = drive.children(root.id).filter(function (f) { return f.mimeType === 'application/vnd.google-apps.spreadsheet' && f.name === 'MTG議事録 台帳（テスト）'; });
+      if (existing.length > 1) throw new Error('テスト台帳が複数あります。');
+      var file = existing[0] || Drive.Files.create({ name: 'MTG議事録 台帳（テスト）', mimeType: 'application/vnd.google-apps.spreadsheet', parents: [root.id], appProperties: { minutes_test_env: c.TEST_ENV_KEY } }, null, { supportsAllDrives: true, fields: 'id' });
+      c.LEDGER_SPREADSHEET_ID = file.id; properties.setProperty('LEDGER_SPREADSHEET_ID', file.id); book = SpreadsheetApp.openById(file.id);
+    }
+    Stage2Ledger_.initialize(book); var ledger = Stage2Ledger_.open(book);
+    function seed(sheet, field, rows) { var known = new Set(ledger.rows(sheet).map(function (r) { return String(r[field]); })); rows.forEach(function (r) { if (!known.has(String(r[field]))) { ledger.append(sheet, r); known.add(String(r[field])); } }); }
+    seed('masters_folders', 'placement', folderRows.concat(clientRows.map(function (r) { return { placement: '社外/' + r.client_name, drive_folder_id: r.drive_folder_id }; })));
+    seed('masters_clients', 'client_name', clientRows.map(function (r) { return Object.assign({}, r, { domains: JSON.stringify(r.domains) }); }));
+    seed('masters_internal', 'email_or_domain', NotionFixtures_.masters.internal.map(function (v) { return { email_or_domain: v }; }));
+    seed('masters_people', 'google_email', NotionFixtures_.masters.people);
+    console.log('テスト環境を準備しました。FOLDER_SYSTEM_TEST_ID=' + root.id + ' / LEDGER_SPREADSHEET_ID=' + c.LEDGER_SPREADSHEET_ID + '。プロパティに自動登録済みです。');
+    return { root: root.id, ledger: c.LEDGER_SPREADSHEET_ID, raw: raw.id, inbox: inbox.id };
+  }
+  return { config: config, open: open, setup: setup };
+})();
+
+function setupTestWorkspace() { return Ledger_.withLock(Stage2Drive_.setup); }
+
+
+// stage2Ledger.js
+var Stage2Ledger_ = (function () {
+  function text(value) { var s = String(value === undefined || value === null ? '' : value); return /^[=+@]/.test(s) ? "'" + s : s; }
+  function initialize(book) {
+    var plan = Ledger_.plan(book); // 全シートの見出しを先に確認し、既存データは上書きしません。
+    plan.forEach(function (p) {
+      var sheet = book.getSheetByName(p.sheet) || book.insertSheet(p.sheet);
+      if (!sheet.getLastRow()) sheet.appendRow(p.headers);
+    });
+  }
+  function open(book) {
+    Ledger_.plan(book).forEach(function (p) { if (p.action !== '変更なし') throw new Error('台帳が未初期化です。setupTestWorkspaceを実行してください。'); });
+    function rows(name) {
+      var sheet = book.getSheetByName(name), headers = Ledger_.headers[name].split(',');
+      return sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues().map(function (values, i) {
+        var r = { _row: i + 2 }; headers.forEach(function (h, j) { r[h] = values[j]; }); return r;
+      });
+    }
+    function append(name, data) {
+      var sheet = book.getSheetByName(name), values = Ledger_.headers[name].split(',').map(function (h) { return text(data[h]); });
+      sheet.appendRow(values); data._row = sheet.getLastRow(); return data;
+    }
+    function save(row) {
+      row.version = Number(row.version || 0) + 1; row.updated_at = new Date().toISOString();
+      if (!row._row) return append('minutes', row);
+      var headers = Ledger_.headers.minutes.split(',');
+      book.getSheetByName('minutes').getRange(row._row, 1, 1, headers.length).setValues([headers.map(function (h) { return text(row[h]); })]);
+      return row;
+    }
+    function list(value) {
+      if (!value) return [];
+      if (Array.isArray(value)) return value;
+      try { var a = JSON.parse(value); if (Array.isArray(a)) return a; } catch (e) { /* カンマ形式も受け付けます。 */ }
+      return String(value).split(',').map(function (v) { return v.trim(); }).filter(Boolean);
+    }
+    function masters() {
+      return { folders: rows('masters_folders'), clients: rows('masters_clients').map(function (r) { return Object.assign({}, r, { domains: list(r.domains) }); }),
+        internal: rows('masters_internal').map(function (r) { return r.email_or_domain; }), people: rows('masters_people') };
+    }
+    function log(action, target, summary) { Ledger_.dryLog(book, action, target, typeof summary === 'string' ? summary : JSON.stringify(summary)); }
+    function displayId(start) {
+      var prefix = 'MTG-' + Utilities.formatDate(new Date(start), 'Asia/Tokyo', 'yyMMdd') + '-';
+      var next = rows('minutes').filter(function (r) { return String(r.display_id).startsWith(prefix); }).reduce(function (max, r) { return Math.max(max, Number(String(r.display_id).slice(prefix.length)) || 0); }, 0) + 1;
+      return prefix + String(next).padStart(2, '0');
+    }
+    return { rows: rows, append: append, save: save, masters: masters, log: log, displayId: displayId };
+  }
+  return { initialize: initialize, open: open };
+})();
 
 
 // testDbSchema.js

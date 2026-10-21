@@ -7,14 +7,18 @@ var NotionFixturePlan_ = (function () {
     // タイトル名や参加者形式は実機確認対象です。本文の文字起こしも許容します。
     inbox: { '取り込み状態': ['select'], 'meeting_key': ['rich_text'], '日付': ['date'], '会議URL': ['url'], '長さ': ['number', 'rich_text'], '参加者': ['rich_text', 'people', 'multi_select'], 'AIメモ': ['rich_text'], 'トランスクリプト': ['rich_text'] }
   };
-  function compareSchema(key, properties) {
-    var differences = [], wanted = expected[key];
+  function compareSchema(key, properties, requesterType) {
+    requesterType = requesterType || 'people';
+    if (!['people', 'rich_text', 'email'].includes(requesterType)) throw new Error('NOTION_REQUESTER_TYPE が不正です。');
+    var differences = [], knownAdditions = [], wanted = Object.assign({}, expected[key]);
+    if (key === 'tasks') wanted['依頼者'] = [requesterType];
     Object.keys(wanted).forEach(function (name) {
       var p = properties[name], optionalBody = key === 'inbox' && ['AIメモ', 'トランスクリプト'].includes(name);
       if (!p || !wanted[name].includes(p.type)) differences.push({ kind: optionalBody ? '本文での提供可・要確認' : '項目名・型', name: name, expected: wanted[name], actual: p ? p.type : '未設定' });
     });
     Object.keys(properties).filter(function (name) { return !wanted[name] && !(key === 'inbox' && properties[name].type === 'title'); }).forEach(function (name) {
-      differences.push({ kind: key === 'tasks' && name === '依頼者' ? 'SPECで型未決定' : '追加項目', name: name, actual: properties[name].type });
+      if (key === 'tasks' && ['関連プロジェクト（参照元）', 'サブアイテム', '関連プロジェクト'].includes(name)) knownAdditions.push({ name: name, type: properties[name].type });
+      else differences.push({ kind: '追加項目', name: name, actual: properties[name].type });
     });
     if (key === 'inbox' && !Object.keys(properties).some(function (n) { return properties[n].type === 'title'; })) differences.push({ kind: '項目名・型', name: 'タイトル', expected: ['title'], actual: '未設定' });
     function options(name, values) {
@@ -28,7 +32,7 @@ var NotionFixturePlan_ = (function () {
     if (key !== 'inbox') options('事業部領域', domains);
     if (key === 'tasks') options('ステータス', ['未着手', '保留', '進行中', '対応不要', '完了']);
     if (key === 'inbox') options('取り込み状態', ['未処理', '取り込み済み', '対象外（Meet優先）', 'エラー']);
-    return { properties: Object.keys(properties).map(function (n) { return { name: n, type: properties[n].type }; }), differences: differences };
+    return { properties: Object.keys(properties).map(function (n) { return { name: n, type: properties[n].type }; }), differences: differences, knownAdditions: knownAdditions };
   }
   function clean(value) { return String(value || '').replace(/https?:\/\/[^\s<>]+/gi, '（URL省略）'); }
   function richText(value) {

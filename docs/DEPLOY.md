@@ -1,5 +1,7 @@
 # 開発・接続確認
 
+最新のマイドライブ＋テスト台帳での段階2検証は [ingestInbox実行手順](INGEST_INBOX_TEST.md) を使ってください。
+
 テストDB作成後の接続確認・Notionサンプル取り込みは [Notion検証手順](NOTION_FIXTURE_TEST.md) を参照してください。
 
 テスト用Notion DBがまだない場合は、先に [テストDB初期作成手順](SETUP_TEST_DATABASES.md) を使います。

@@ -6,11 +6,12 @@ GAS エディタ「プロジェクトの設定」＞「スクリプト プロパ
 
 | キー | 例・既定 | 説明 |
 |---|---|---|
-| DRY_RUN | `true` | 開発中は true。本番切り替えは人の承認後 |
+| DRY_RUN | `true` | 読み取り・予定表示はtrue。ユーザー実行のテスト環境準備・選択肢追加・ingestInbox検証時だけfalse。本番切り替えとは別 |
 | SETUP_CREATE_TEST_DB | `false`（初期作成時のみ `true`） | `ENV=test` と組み合わせ、setupTestDatabasesによる管理ページ下のテストDB作成だけを許可。実行後falseに戻す |
 | ENV | `test` / `prod` | test のとき下の *_TEST を使う |
 | LEDGER_SPREADSHEET_ID | | 台帳スプレッドシート |
-| SHARED_DRIVE_ID | | 共有ドライブ「MTG記録」 |
+| SHARED_DRIVE_ID | | 共有ドライブ「MTG記録」。今回のENV=testのマイドライブ検証では未設定可（setupTestWorkspace時は空欄） |
+| TEST_ENV_KEY | 自動生成 | setupTestWorkspaceが生成するテスト環境識別子。変更・削除しない |
 | FOLDER_SYSTEM_ID / FOLDER_SYSTEM_TEST_ID | | `_system` / `_system/_test` |
 | NOTION_TOKEN ★ | | 内部インテグレーションのトークン（contact@ が作成） |
 | NOTION_VERSION | 公式で確認 | Notion API のバージョン |
@@ -20,7 +21,8 @@ GAS エディタ「プロジェクトの設定」＞「スクリプト プロパ
 | NOTION_DB_TLDV_INBOX | | tl;dv 受信 |
 | NOTION_MTG_URL_SOURCE | `none` | `folder` / `meet` / `none`（要決定） |
 | TASK_DB_MODE | `single` | `single` / `dual`（要決定） |
-| CHATWORK_TOKEN ★ | | 投稿アカウントの API トークン |
+| NOTION_REQUESTER_TYPE | `people` | 依頼者の型の仮既定。people／rich_text／emailで切替可。接続確認に反映し、タスク書き込みはまだ行わない |
+| CHATWORK_TOKEN ★ | | 未設定なら投稿せず実行ログとdry_run_logに予定を表示。今回の検証では空欄のまま |
 | CHATWORK_ROOM_ID / CHATWORK_ROOM_ID_TEST | | 議事録確認ルーム／テスト用ルーム |
 | CHATWORK_ADMIN_ACCOUNT_IDS | | 停止・エラー時にメンションする人（カンマ区切り） |
 | WEBAPP_URL | | 確認画面のURL。GAS所有者を個人Gmailに変更したため公開方式は未確定。今は空欄 |

@@ -17,6 +17,7 @@ var DriveUtil_ = (function () {
     return matches[0];
   }
   function verifyTestRoot(c) {
+    if (!c.SHARED_DRIVE_ID) return Stage2Drive_.open(c).root;
     var root = Drive.Files.get(c.FOLDER_SYSTEM_TEST_ID, { supportsAllDrives: true, fields: 'id,name,parents,driveId,mimeType' });
     if (root.name !== '_test' || root.driveId !== c.SHARED_DRIVE_ID || root.mimeType !== folderMime || !root.parents || root.parents.length !== 1) throw new Error('テスト用フォルダを確認してください。');
     var parent = Drive.Files.get(root.parents[0], { supportsAllDrives: true, fields: 'id,name,driveId' });

@@ -14,7 +14,7 @@ function ingestFixturesToNotionTest() {
     });
     plans.forEach(function (item) {
       var key = 'NOTION_FIXTURE:' + NotionTestEnvironment_.normalize(minutes.databaseId) + ':' + item.meetingKey;
-      var saved = env.properties.getProperty(key), plan = item.plan;
+      var saved = env.properties.getProperty(key) || env.properties.getProperty('NOTION_PAGE:' + NotionTestEnvironment_.normalize(minutes.databaseId) + ':' + item.meetingKey), plan = item.plan;
       console.log('判定: ' + item.meetingKey + ' / ' + JSON.stringify(plan.placement));
       plan.warnings.forEach(function (w) { console.log(w); });
       console.log('タスク提案（書き込まない）: ' + JSON.stringify(plan.taskProposals));

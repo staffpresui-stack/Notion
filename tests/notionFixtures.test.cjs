@@ -6,21 +6,21 @@ const clone = x => JSON.parse(JSON.stringify(x));
 const parent = '400ca178-7419-80e8-bb9a-f157874b6105';
 const minutesId = 'd9cc47f9-543e-4bcb-8ec8-27bebc0feac5';
 const tasksId = 'c908936a-6999-4119-9e9c-df364f5f5d1b';
-const inboxId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const inboxId = '400ca178-7419-80dd-a3e0-ef9e2267a64c';
 const prop = (type, config = {}) => ({ type, [type]: config });
 function schemaProperties() {
   const opts = ['セールス・マーケ', 'EC', '生産管理', '経理・バックオフィス', 'Salesforce・AI', '経営'].map(name => ({ name }));
   return {
     minutes: { '議事録名': prop('title'), '日付': prop('date'), '参加者': prop('people'), 'MTG URL': prop('url'),
       '事業部領域': prop('multi_select', { options: opts }), '関連するプロジェクト': prop('relation', { data_source_id: 'tasks-source' }) },
-    tasks: { 'プロジェクト/タスク名': prop('title'), 'ステータス': prop('status', { options: ['未着手', '保留', '進行中', '対応不要', '完了'].map(name => ({ name })) }),
+    tasks: { '依頼者': prop('people'), 'プロジェクト/タスク名': prop('title'), 'ステータス': prop('status', { options: ['未着手', '保留', '進行中', '対応不要', '完了'].map(name => ({ name })) }),
       '期日': prop('date'), '担当者': prop('people'), '備考': prop('rich_text'), '完了条件': prop('rich_text'), '事業部領域': prop('multi_select', { options: opts }), '関連するMTG': prop('relation'), '親アイテム': prop('relation') },
     inbox: { '名前': prop('title'), '取り込み状態': prop('select', { options: ['未処理', '取り込み済み', '対象外（Meet優先）', 'エラー'].map(name => ({ name })) }),
       'meeting_key': prop('rich_text'), '日付': prop('date'), '会議URL': prop('url'), '長さ': prop('number'), '参加者': prop('rich_text'), 'AIメモ': prop('rich_text'), 'トランスクリプト': prop('rich_text') }
   };
 }
 function harness(settings = {}, customize) {
-  const properties = { ENV: 'test', DRY_RUN: 'true', NOTION_TOKEN: 'fake-token-for-tests', NOTION_DB_MINUTES_TEST: minutesId, NOTION_DB_TASKS_TEST: tasksId, ...settings };
+  const properties = { ENV: 'test', DRY_RUN: 'true', NOTION_TOKEN: 'fake-token-for-tests', NOTION_DB_MINUTES_TEST: minutesId, NOTION_DB_TASKS_TEST: tasksId, NOTION_DB_TLDV_INBOX: inboxId, ...settings };
   const calls = [], logs = [], sets = [], schemas = schemaProperties(), pages = [];
   let release = 0, ambiguous = false, relationPage = null;
   const env = { calls, logs, sets, schemas, pages, properties, release: () => release,
@@ -53,7 +53,7 @@ function harness(settings = {}, customize) {
       return { getResponseCode: () => status, getContentText: () => JSON.stringify(response) };
     } }
   });
-  for (const file of ['meetingRules.js', 'notionFixtures.generated.js', 'notionFixturePlan.js', 'notionTestEnvironment.js', 'ingestFixturesToNotionTest.js']) {
+  for (const file of ['meetingRules.js', 'notionFixtures.generated.js', 'notionFixturePlan.js', 'notionTestEnvironment.js', 'ingestFixturesToNotionTest.js', 'inboxPlan.js']) {
     vm.runInContext(fs.readFileSync('gas-core/src/' + file, 'utf8'), ctx);
   }
   return { ...env, ctx };
@@ -75,9 +75,32 @@ test('純粋関数: SPECとの差分は欠落・型・選択肢・追加項目�
   assert.ok(differences.some(d => d.name === 'ステータス' && d.actual === '未設定'));
   assert.ok(differences.some(d => d.name === '期日' && d.actual === 'rich_text'));
   assert.ok(differences.some(d => d.kind === '選択肢' && d.extra.includes('独自')));
-  assert.ok(differences.some(d => d.name === '依頼者' && d.kind === 'SPECで型未決定'));
+  assert.ok(!differences.some(d => d.name === '依頼者'));
+  h.schemas.tasks['依頼者'] = prop('rich_text');
+  assert.ok(compare('tasks', h.schemas.tasks).differences.some(d => d.name === '依頼者'));
+  assert.ok(!compare('tasks', h.schemas.tasks, 'rich_text').differences.some(d => d.name === '依頼者'));
   delete h.schemas.inbox['トランスクリプト'];
   assert.ok(compare('inbox', h.schemas.inbox).differences.some(d => d.kind === '本文での提供可・要確認'));
+});
+test('既知のタスク追加項目3件は差分にせず、既知の追加項目として返します', () => {
+  const h = harness();
+  for (const name of ['関連プロジェクト（参照元）', 'サブアイテム', '関連プロジェクト']) h.schemas.tasks[name] = prop('relation');
+  const result = h.ctx.NotionFixturePlan_.compareSchema('tasks', h.schemas.tasks);
+  assert.equal(result.differences.length, 0); assert.equal(result.knownAdditions.length, 3);
+});
+test('tl;dv選択肢修復はDRY_RUNで無書き込み、実行時は既存ID・色・名前を保持します', () => {
+  for (const dryRun of ['true', 'false']) {
+    const h = harness({ DRY_RUN: dryRun });
+    h.schemas.inbox['取り込み状態'].select.options = [{ id: 'existing-1', name: '独自の状態', color: 'red' }, { id: 'existing-2', name: '未処理', color: 'blue' }];
+    const result = h.ctx.NotionTestEnvironment_.open(true, 'inbox-options').addInboxOptions();
+    assert.equal(result.added.length, 3);
+    const updates = h.calls.filter(c => c.method === 'patch');
+    assert.equal(updates.length, dryRun === 'true' ? 0 : 1);
+    if (updates.length) {
+      assert.equal(updates[0].path, 'data_sources/inbox-source');
+      assert.deepEqual(updates[0].body.properties['取り込み状態'].select.options.slice(0, 2), clone(h.schemas.inbox['取り込み状態'].select.options));
+    }
+  }
 });
 test('接続確認は全DBを読み、子DBのページネーションも処理し、設定もNotionも変更しません', () => {
   const h = harness();

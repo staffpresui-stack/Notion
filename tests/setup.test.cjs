@@ -20,11 +20,12 @@ test('設定検査は不足キーだけを返し、秘密値を出力しませ�
 });
 test('本番切替・不正な真偽値・本番IDの流用を拒否します', () => {
   const { Config_ } = load(['config.js']);
-  for (const overrides of [{ ENV: 'prod' }, { DRY_RUN: 'false' }, { DRY_RUN: 'TRUE' },
+  for (const overrides of [{ ENV: 'prod' }, { DRY_RUN: 'TRUE' },
     { NOTION_DB_MINUTES: 'test-minutes' }, { FOLDER_SYSTEM_ID: 'test-root' }, { NOTION_DB_TASKS_TEST: 'e321f1cb33654a2c984447f34734a9d7' },
     { GENERATOR_MODE: 'unknown' }, { TASK_DB_MODE: 'dual' }, { GENERATOR_MODE: 'OPENAI_API' }]) {
     assert.equal(Config_.inspect({ ...configured, ...overrides }).ok, false, JSON.stringify(overrides));
   }
+  assert.equal(Config_.inspect({ ...configured, DRY_RUN: 'false', SHARED_DRIVE_ID: '', CHATWORK_TOKEN: '', CHATWORK_ROOM_ID_TEST: '' }).ok, true);
 });
 test('Notion単独確認はChatwork・Drive未設定でも実行でき、安全条件は維持します', () => {
   const { Config_ } = load(['config.js']);

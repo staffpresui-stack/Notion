@@ -9,6 +9,7 @@ const embedded = {
 };
 fs.writeFileSync('gas-core/src/notionFixtures.generated.js',
   '// scripts/bundle.cjs でfixturesから生成します。手で変更しないでください。\nvar NotionFixtures_ = ' + JSON.stringify(embedded, null, 2) + ';\n');
+fs.writeFileSync('gas-core/src/inboxSchema.generated.js', '// schemas/inbox_judgement.schema.jsonから生成します。\nvar InboxJudgementSchema_ = ' + fs.readFileSync('schemas/inbox_judgement.schema.json', 'utf8').trim() + ';\n');
 for (const root of ['gas-core', 'gas-organizer']) {
   const source = fs.readdirSync(path.join(root, 'src')).filter(f => f.endsWith('.js')).sort()
     .map(file => '// ' + file + '\n' + fs.readFileSync(path.join(root, 'src', file), 'utf8')).join('\n\n');

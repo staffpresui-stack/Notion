@@ -1,17 +1,20 @@
 var Config_ = (function () {
   var defaults = { ENV: 'test', DRY_RUN: 'true', GENERATOR_MODE: 'CHATGPT',
-    NOTION_VERSION: '2025-09-03', TASK_DB_MODE: 'single', NOTION_MTG_URL_SOURCE: 'none' };
+    NOTION_VERSION: '2025-09-03', TASK_DB_MODE: 'single', NOTION_MTG_URL_SOURCE: 'none', NOTION_REQUESTER_TYPE: 'people' };
   // テスト対象を本番IDで代用しません。不明な値は安全側で拒否します。
   function inspect(values, profile) {
     var c = Object.assign({}, defaults, values), missing = [], errors = [];
-    var required = ['LEDGER_SPREADSHEET_ID', 'SHARED_DRIVE_ID', 'NOTION_TOKEN', 'NOTION_DB_TLDV_INBOX', 'CHATWORK_TOKEN'];
+    var required = ['LEDGER_SPREADSHEET_ID', 'NOTION_TOKEN', 'NOTION_DB_TLDV_INBOX'];
+    if (c.ENV !== 'test') required.push('SHARED_DRIVE_ID');
     if (!['test', 'prod'].includes(c.ENV)) errors.push('ENV は test または prod を指定してください。');
     if (!['true', 'false'].includes(c.DRY_RUN)) errors.push('DRY_RUN は true または false を指定してください。');
-    if (c.ENV !== 'test' || c.DRY_RUN !== 'true') errors.push('開発中は ENV=test、DRY_RUN=true が必要です。');
+    if (c.ENV !== 'test') errors.push('この開発環境はENV=test専用です。');
+    if (!['people', 'rich_text', 'email'].includes(c.NOTION_REQUESTER_TYPE)) errors.push('NOTION_REQUESTER_TYPE が不正です。');
     if (!['CHATGPT', 'OPENAI_API'].includes(c.GENERATOR_MODE)) errors.push('GENERATOR_MODE が不正です。');
     if (!['single', 'dual'].includes(c.TASK_DB_MODE)) errors.push('TASK_DB_MODE が不正です。');
     if (!['none', 'folder', 'meet'].includes(c.NOTION_MTG_URL_SOURCE)) errors.push('NOTION_MTG_URL_SOURCE が不正です。');
-    required = required.concat(['FOLDER_SYSTEM_TEST_ID', 'NOTION_DB_MINUTES_TEST', 'NOTION_DB_TASKS_TEST', 'CHATWORK_ROOM_ID_TEST']);
+    required = required.concat(['FOLDER_SYSTEM_TEST_ID', 'NOTION_DB_MINUTES_TEST', 'NOTION_DB_TASKS_TEST']);
+    if (c.CHATWORK_TOKEN) required.push('CHATWORK_ROOM_ID_TEST');
     if (c.GENERATOR_MODE === 'OPENAI_API') required = required.concat(['OPENAI_API_KEY', 'OPENAI_MODEL']);
     if (c.TASK_DB_MODE === 'dual') required.push('NOTION_DB_NONPROJECT_TEST');
     // Notionの読み取り確認は、まだ使わないChatworkやDriveの設定で止めません。
