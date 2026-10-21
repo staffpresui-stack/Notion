@@ -1,5 +1,7 @@
 # MTG議事録自動化：Codex 用の指示書一式
 
+現在はfinance@premiere-mode.co.jpのGASと共有ドライブを使います。最新の設定値と実行順は [共有ドライブ実行手順](docs/SHARED_DRIVE_TEST.md) を参照してください。Notionのオーナー・内部インテグレーションはcontact@のままです。
+
 プレミアモード社の Codex 環境で、議事録自動化（Google Meet／tl;dv → ChatGPT → GAS → Drive・Notion・Chatwork・確認画面）を構築するための資料です。Codex はこのフォルダを開くと `AGENTS.md` を自動で読みます。
 
 ## 入っているもの
@@ -14,7 +16,7 @@
 
 ## Codex に渡す前に用意するもの
 1. Windows の PC に Node.js（LTS）を入れる。Codex から `npm i -g @google/clasp` を実行できる状態にする。
-2. `clasp login` は **staff.presui@gmail.com** で行う（ユーザー指定のGAS所有アカウント）。
+2. `clasp login` は **finance@premiere-mode.co.jp** で行う（ユーザー指定のGAS所有アカウント）。
 3. 開発用の環境：
    - 共有ドライブ「MTG記録」の中に `_system/_test/`（00_受信・inbox・ref）
    - Notion のテスト用 DB（MTG議事録・プロジェクト・タスクを複製したもの）と「tl;dv 受信」DB

@@ -4,7 +4,7 @@ GASの実行はユーザーが行います。開発環境でのテストはHTTP�
 
 ## 確認済みの前提（ユーザー報告）
 
-- GASは `staff.presui@gmail.com` の開発プロジェクトを使います。
+- 旧staff.presuiのGASで検証済みです。以後はfinance@premiere-mode.co.jpの本体GASを使います。重複防止記録はプロジェクト間で自動共有されません。移行方法は `docs/SHARED_DRIVE_TEST.md` を参照します。
 - トークンは「MTG議事録連携（GAS）」のものです。コードからインテグレーション名は判定しません。
 - 管理用ページ：`400ca178-7419-80e8-bb9a-f157874b6105`
 - MTG議事録（テスト）：`d9cc47f9-543e-4bcb-8ec8-27bebc0feac5`

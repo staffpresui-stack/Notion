@@ -1,7 +1,7 @@
 # ChatGPT 予約タスクの指示文（GENERATOR_MODE=CHATGPT）
 
-- 設定場所：会社の ChatGPT（contact@）で、Cloud 実行の予約タスクを作り、下の「指示文」を貼る。実行間隔は1時間ごと（仮）。
-- 接続するアプリ：Google Drive（contact@ の Google アカウント）。Notion と Chatwork には接続しない（書き込みは GAS が行う）。
+- 設定場所：会社の ChatGPT（finance@）で、Cloud 実行の予約タスクを作り、下の「指示文」を貼る。実行間隔は1時間ごと（仮）。
+- 接続するアプリ：Google Drive（finance@premiere-mode.co.jp のGoogle Workspaceアカウント）。Notion と Chatwork には接続しない（書き込みは GAS が行う）。
 - GENERATOR_MODE=OPENAI_API のときは、GAS が同じ指示文を system 指示として使う（出力は JSON Schema で受け取るので、「出力先」の段落は使わない）。
 
 ---

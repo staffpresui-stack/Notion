@@ -6,13 +6,14 @@
 
 ## ユーザー指定による変更
 
-2026-10-21追記：段階2の開発検証は `staff.presui@gmail.com` のマイドライブ内に作る専用 `_system/_test` とテスト台帳で行えます。`ENV=test` の場合に限り `SHARED_DRIVE_ID` は未設定可です。通常の共有ドライブ運用や本番への切替は未承認です。
-`CHATWORK_TOKEN` が未設定なら実投稿せず、投稿予定を実行ログと台帳の `dry_run_log` に残します。
-テスト用Notionの項目確認・サンプル3件作成はユーザー側で成功報告済みです。既存の `NOTION_FIXTURE:*` 記録は消さず、ingestInboxでも同じmeeting_keyのページ再利用に使います。
+GAS-A・GAS-Bの所有・認証、共有ドライブの作成・管理、ChatGPTの所有・Drive接続は `finance@premiere-mode.co.jp` に変更します。contact@はWorkspaceユーザーではなく、Notionのオーナーと内部インテグレーションだけを引き続き担当します。GAS-Bは各会議主催者の権限でファイルを移動します。
 
-GAS-A・GAS-Bの所有者・作成・認証用アカウントは `staff.presui@gmail.com` に変更します（2026-10-21）。以下のcontact@所有・実行という記述より優先します。GAS-Bのファイル移動は引き続き各会議主催者の権限です。Notion等の他サービスのアカウントは変更しません。
+finance@で共有ドライブ「MTG記録」、既定フォルダ、台帳2つ、本体GASを作成済みです。今回の実行はまだ行っていません。共有ドライブの本番領域は読み取り確認にとどめ、準備・取り込みは `_system/_test` 内だけに限定します。詳しいIDと手順は `docs/SHARED_DRIVE_TEST.md` に記載します。_systemには目印を付けず、_testだけに付けます。
 
-個人Gmailのため、元設計の `access: DOMAIN` と会社ドメイン付きURLはそのまま使用できません。現在はWebアプリを公開せず、将来の公開方式と操作者識別を実機確認します。共有ドライブへの外部アカウント権限も未確認です。
+旧マイドライブ代用構成は互換機能として残しますが、今回のfinance@構成では使いません。`ENV=test` の場合に限りSHARED_DRIVE_ID未設定の代用モードも許容します。本番への切替は未承認です。
+`CHATWORK_TOKEN` がない場合は投稿予定をログとdry_run_logに出すだけです。既存のNOTION_FIXTURE記録は削除しません。finance@の新しいGASへ必要な記録を移し、サンプルの重複作成を防ぎます。
+
+WorkspaceのDOMAIN限定Webアプリは設計上の候補ですが、公開・操作者識別は未検証で今は公開しません。
 
 ## 1. 前提と範囲
 
@@ -23,7 +24,7 @@ GAS-A・GAS-Bの所有者・作成・認証用アカウントは `staff.presui@g
 | 補助の経路 | 相手主催など Meet で記録できない会議。tl;dv（会社で1アカウント・無料）。Notion のネイティブ連携で受信DB に入る。無料のワークフロートリガーは生涯20回（2026-10-19 時点で残り17） |
 | 重複 | 同じ会議に Meet と tl;dv の両方がある場合は Meet を使い、tl;dv 側は「対象外（Meet優先）」 |
 | 議事録の生成 | ChatGPT Plus の予約タスク（Cloud 実行）。代替として GAS から OpenAI API を呼ぶモードも実装する（`GENERATOR_MODE`） |
-| 書き込みの担当 | Notion・フォルダ移動・Chatwork・台帳は GAS-A（contact@）。Meet ファイルの最初の移動だけ GAS-B（主催者の権限） |
+| 書き込みの担当 | Notion・フォルダ移動・Chatwork・台帳は GAS-A（finance@）。Meet ファイルの最初の移動だけ GAS-B（主催者の権限） |
 | 対象外 | 録画の動画を tl;dv から取り込むこと（無料ではダウンロード不可）。川戸さんのワークスペースへの書き込み |
 
 ---
@@ -32,7 +33,8 @@ GAS-A・GAS-Bの所有者・作成・認証用アカウントは `staff.presui@g
 
 | 主体 | 役割 |
 |---|---|
-| contact@ | GAS-A と GAS-B の所有者。共有ドライブ「MTG記録」のコンテンツ管理者。Notion ワークスペースの唯一のメンバー（オーナー）で、内部インテグレーションを作成。ChatGPT Plus（予約タスクの作成者。ログインが contact@ かは要確認）。tl;dv 会社アカウント（要確認） |
+| finance@ | Google Workspaceの管理者。GAS-A・GAS-Bの所有者、共有ドライブ「MTG記録」の作成・管理アカウント、ChatGPTの所有・Drive接続アカウント。共有ドライブ内の実操作権限は実機確認します（共有ドライブのファイルは組織所有です） |
+| contact@ | Notionワークスペースのオーナー・内部インテグレーションの作成者。Workspaceユーザーではありません。tl;dv会社アカウントの確認は別途 |
 | 会議の主催者 | Meet ファイルの所有者。GAS-B で一度「登録」し、自分の時間主導トリガーを許可する。共有ドライブで `_system/00_受信` に書き込める権限（投稿者以上）が必要（要確認：`_system` をアクセス制限した場合の付与方法） |
 | 確認者 | 確認画面で確定・修正する人（仮：会議の主催者。仕分け待ちは管理者） |
 | 管理者 | 福本さんほか。停止・エラーの通知先。マスタの編集 |
@@ -76,7 +78,7 @@ MTG記録/
 - Advanced Drive Service v3 を使い、すべての呼び出しに `supportsAllDrives: true`。
 - 移動は `Drive.Files.update({}, fileId, null, {addParents, removeParents, supportsAllDrives:true})`。
 - ファイルに `appProperties`（`meeting_key`, `kind`=recording|transcript|gemini|minutes|tldv_transcript）を付ける。
-- 共有ドライブ内でフォルダを移動できるのはコンテンツ管理者以上（contact@ は可）。
+- 共有ドライブ内でフォルダを移動できるのはコンテンツ管理者以上（finance@ の権限を実機確認）。
 
 ---
 
@@ -260,9 +262,9 @@ Notion：MTG議事録「{議事録名}」（{作成済み|作成待ち}）
 
 ## 12. 確認・編集画面（GAS-A Web アプリ）
 
-- `executeAs: USER_DEPLOYING`（contact@）、`access: DOMAIN`。操作者は `Session.getActiveUser().getEmail()` で取得し、取れない場合は操作を拒否する（要確認：ドメイン内で取得できるか）。
+- `executeAs: USER_DEPLOYING`（finance@）、`access: DOMAIN`。操作者は `Session.getActiveUser().getEmail()` で取得し、取れない場合は操作を拒否する（要確認：ドメイン内で取得できるか）。
 - 利用者への案内 URL は `https://script.google.com/a/macros/premiere-mode.co.jp/s/{ID}/exec`（複数アカウント同時ログインの問題を避ける）。
-- 見せる範囲：画面は contact@ の権限で動くので、Drive の権限が効かない。`masters_folders.rank` と `masters_people` で見せる範囲をアプリ内で制御する（ランク設計は要決定。決まるまでは管理者と確認者だけが開ける）。
+- 見せる範囲：画面は finance@ の権限で動くので、Drive の権限が効かない。`masters_folders.rank` と `masters_people` で見せる範囲をアプリ内で制御する（ランク設計は要決定。決まるまでは管理者と確認者だけが開ける）。
 
 ### タブ1：議事録の確認
 - 一覧：絞り込み（確認待ち・仕分け待ち・要対応・確定・対象外・自分が担当・日付・事業部）。列：日時、会議名、記録元（Meet／tl;dv）、状態、格納先、事業部領域、タスク提案数、確信度。
@@ -292,11 +294,11 @@ Notion：MTG議事録「{議事録名}」（{作成済み|作成待ち}）
 | 処理 | 実行 | 間隔 |
 |---|---|---|
 | GAS-B `moverRun` | 各主催者 | 15分 |
-| GAS-A `ingestTldv` | contact@ | 10分 |
-| GAS-A `ingestInbox` | contact@ | 10分 |
-| GAS-A `generatorRun`（OPENAI_API モードのみ） | contact@ | 10分 |
-| GAS-A `exportRef`（projects.json / masters.json） | contact@ | 毎朝6時 |
-| GAS-A `digestRun`（朝の一覧・催促・停止検知） | contact@ | 毎朝9時＋1時間ごとに停止検知 |
+| GAS-A `ingestTldv` | finance@ | 10分 |
+| GAS-A `ingestInbox` | finance@ | 10分 |
+| GAS-A `generatorRun`（OPENAI_API モードのみ） | finance@ | 10分 |
+| GAS-A `exportRef`（projects.json / masters.json） | finance@ | 毎朝6時 |
+| GAS-A `digestRun`（朝の一覧・催促・停止検知） | finance@ | 毎朝9時＋1時間ごとに停止検知 |
 
 ---
 

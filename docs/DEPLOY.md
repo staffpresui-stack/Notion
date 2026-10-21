@@ -1,6 +1,6 @@
 # 開発・接続確認
 
-最新のマイドライブ＋テスト台帳での段階2検証は [ingestInbox実行手順](INGEST_INBOX_TEST.md) を使ってください。
+最新のfinance@・共有ドライブでの段階2検証は [共有ドライブ実行手順](SHARED_DRIVE_TEST.md) を使ってください。マイドライブ用の旧手順は代用構成を使う場合だけ参照します。
 
 テストDB作成後の接続確認・Notionサンプル取り込みは [Notion検証手順](NOTION_FIXTURE_TEST.md) を参照してください。
 
@@ -23,18 +23,18 @@ claspは開発依存に固定済みです。グローバルインストールは
 
 ## 今回使うGoogleアカウント
 
-GASの所有者はユーザー指定の `staff.presui@gmail.com` です。Apps Script右上のアカウント表示で確認してから、新規の開発用プロジェクトを作成します。Webアプリの公開はまだ行いません。会社の共有ドライブへの権限は別途確認します。
+GASの所有者はユーザー指定の `finance@premiere-mode.co.jp` です。Apps Script右上のアカウント表示を確認し、作成済みの本体プロジェクトを開きます。Notionのオーナーと内部インテグレーションはcontact@のままです。ChatGPTのDrive接続もfinance@に変更済みです。Webアプリの公開はまだ行いません。
 
 ## Google側の準備
 
-Googleに接続する際は、staff.presui@gmail.comで操作します。クラウドにあるGoogle用の認証ファイルは、staff.presui@gmail.comのApps Script権限を証明するものではありません。
+Googleに接続する際は、finance@premiere-mode.co.jpで操作します。クラウドにあるGoogle用の認証ファイルは、finance@premiere-mode.co.jpのApps Script権限を証明するものではありません。
 APIキーやトークンはチャットやリポジトリに貼らず、Apps Scriptのスクリプトプロパティに入力します。
 
-現時点ではGASプロジェクトを作成・接続していません。段階0のコードを使う方法は次の2つです。
+finance@の本体プロジェクト「MTG議事録自動化・本体」はユーザーが作成済みです。クラウド側のclaspには未接続です。以下は補助的な接続手順です。
 
 ### Apps Scriptエディタで読み取り確認
 
-1. staff.presui@gmail.comでApps Scriptを開き、本体用・主催者用の2プロジェクトを作成します。
+1. finance@premiere-mode.co.jpで作成済みの本体プロジェクトを開きます。主催者用は別途作成する段階です。
 2. プロジェクト設定でマニフェストを表示し、それぞれ `gas-core/appsscript.json`、`gas-organizer/appsscript.json` の内容を設定します。
 3. `npm run build` で生成する各 `dist/gas-core/Code.gs`、`dist/gas-organizer/Code.gs` を、それぞれのプロジェクトの `コード.gs` に貼ります。元の `src/` を個別に貼る方法と併用すると二重定義になるので、片方だけ使います。
 4. 「サービス」に本体はDrive v3、主催者用はDrive v3とCalendar v3があることを確認します。標準Cloudプロジェクトを使う場合は対応APIも有効化します。
@@ -48,7 +48,7 @@ APIキーやトークンはチャットやリポジトリに貼らず、Apps Scr
 
 ### claspを使う場合
 
-認証するPCでリポジトリを開き、`npm ci` 後、`npx clasp login` をstaff.presui@gmail.comで行います。
+認証するPCでリポジトリを開き、`npm ci` 後、`npx clasp login` をfinance@premiere-mode.co.jpで行います。
 Google Apps Scriptのユーザー設定でApps Script APIを有効化してください。
 既存の2プロジェクトそれぞれに、以下のローカル設定を作成します。IDは秘密トークンではありませんがGit管理しません。
 

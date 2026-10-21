@@ -14,15 +14,13 @@
 
 ## 最新のユーザー指定（元の設計より優先）
 
-- 最新の依頼で段階2のingestInbox実装を許可。ENV=testに限りstaff.presuiのマイドライブ専用テストフォルダ・テスト台帳を使用可能（SHARED_DRIVE_IDなし可）。準備・サンプル投入・テスト取り込みはユーザーがGASでDRY_RUN=falseにして実行し、Codexは実行しない。Chatwork未設定時はログとdry_run_logだけ。手順は `docs/INGEST_INBOX_TEST.md`。以下の古いマイドライブ禁止・Drive書き込み禁止という記述より今回のテスト限定指定を優先する。本番書き込みは引き続き禁止。
-
-- テストDB初期作成はユーザー側で成功報告済み。今回の接続確認とNotionサンプル検証の手順は `docs/NOTION_FIXTURE_TEST.md`。`ingestFixturesToNotionTest()` に限り、ENV=test、確認済みテストID、DRY_RUN=falseでサンプルページ作成を許可する。GAS実行・実Notion書き込みはユーザーが行う。Drive・Chatwork・タスク提案の書き込みは禁止。通常処理のDRY_RUN制約は維持する。
-
-- ユーザーがテストDB初期作成関数の実装を明示依頼済み。`setupTestDatabases()` は `ENV=test` と `SETUP_CREATE_TEST_DB=true` で管理ページ下への初期作成を許可する専用機能です。この関数はDRY_RUN=trueでもテストDBを実作成します。GAS実行とNotionへの書き込みはユーザーが行います。Codex側では実行しません。通常処理のDRY_RUN制約は維持します。手順は `docs/SETUP_TEST_DATABASES.md`。
-
-- GAS-A・GAS-Bの作成・所有・clasp認証は `staff.presui@gmail.com` を使います。Notion・ChatGPT・tl;dv・Chatworkのアカウント変更は指示されていません。
-- 個人Gmailには会社ドメイン限定公開を適用できないため、現時点ではWebアプリを公開しません。共有ドライブへのアクセス権も別途検証します。権限がない場合に無断で個人Driveへ保存先を変えないでください。
-- 以下のcontact@所有という記載は元の設計です。GASの所有者・実行用アカウントに関しては今回の指定を優先します。GAS-Bの実行権限は引き続き各会議主催者です。
+- GAS-A・GAS-Bの所有・作成・認証、共有ドライブ「MTG記録」の作成・管理、ChatGPTの所有・Drive接続は `finance@premiere-mode.co.jp` に変更済み。contact@はWorkspaceユーザーではありません。Notionのオーナー・内部インテグレーションはcontact@のままです。
+- finance@の本体GASと共有ドライブのフォルダ・本番／テスト台帳はユーザーが作成済みです。最新の手順は `docs/SHARED_DRIVE_TEST.md`。ENV=testで_test内だけを準備・検証します。_systemは読み取りだけで、目印を付けません。本番台帳・_test外への書き込みは禁止です。
+- GAS実行と実サービスへの書き込みはユーザーが行います。Codexはローカル実装・テスト・コミット・許可されたworkへのpushを行います。mainへのマージや強制pushは行いません。
+- 前回staff.presuiで成功したNotionのサンプル3件と重複防止記録は維持します。GASのスクリプトプロパティはプロジェクト間で自動移行しません。再利用にはNOTION_FIXTURE:*のページID記録をfinance@側へ移します。NOTION_TOKENは人がfinance@側の設定に入力します。
+- Chatworkトークン未設定時はログとdry_run_logだけ。タスク提案は書き込みません。共有ドライブ用の初期化はsetupSharedTestWorkspace、旧マイドライブ版setupTestWorkspaceは互換用に残します。
+- testの実書き込みはユーザーがDRY_RUN=falseで明示実行します。setupTestDatabasesだけは既存の専用フラグによる別の初期化機能です。テストDB作成は成功済みで、再作成は不要です。
+- 個人Gmail代用時のDOMAIN限定公開不可という制約は今回のWorkspace構成には適用しません。ただしWebアプリの公開・操作者の識別は未検証であり、今は公開しません。GAS-Bのファイル移動は引き続き各会議主催者の権限です。
 
 ## 1. 最初に読む順番
 
@@ -77,7 +75,7 @@
 [ChatGPT Plus 予約タスク（Cloud）]  00_受信 を読み、議事録 Doc と判定 JSON を _system/inbox/ に置く
         │                     （代替：GAS-A が OpenAI API を直接呼ぶ GENERATOR_MODE=OPENAI_API）
         ▼
-[GAS-A 本体（contact@ 所有）]
+[GAS-A 本体（finance@ 所有）]
    inbox 取り込み → 台帳（スプレッドシート）→ 会議フォルダ作成・配置
    → Notion（MTG議事録）作成 → Chatwork に確認カード投稿（message_id 保存）
         ▼
@@ -86,7 +84,7 @@
    タブ2：タスク提案の承認 → Notion プロジェクト・タスクへ反映（取り消し可）
 ```
 
-- **GAS-A（本体）**：`contact@premiere-mode.co.jp`（以下 contact@）が所有。取り込み・配置・Notion・Chatwork・台帳・確認画面・朝の一覧・停止検知。
+- **GAS-A（本体）**：`finance@premiere-mode.co.jp`（以下 finance@）が所有。取り込み・配置・Notion・Chatwork・台帳・確認画面・朝の一覧・停止検知。
 - **GAS-B（主催者用）**：別の GAS プロジェクト。Web アプリを「アクセスしているユーザーとして実行」で公開し、主催者が一度「登録」を押すと、その主催者の権限で動く時間主導トリガーを作る。Meet のファイルは主催者が所有しているため、移動は主催者の権限で行う必要がある。
 - **状態の正本は台帳スプレッドシート**。Chatwork と Notion は写し。
 
@@ -125,7 +123,7 @@
 /tests/                         … ローカルで動く純粋関数のテスト（Node）
 ```
 
-- デプロイは `clasp`（Node.js）で行う。Windows では `npm i -g @google/clasp` → `clasp login`（**contact@ でログイン**。GAS-B の作成も contact@）。
+- デプロイは `clasp`（Node.js）で行う。Windows では `npm i -g @google/clasp` → `clasp login`（**finance@ でログイン**。GAS-B の作成も finance@）。
 - clasp が使えない場合は、Apps Script エディタに手で貼る手順を `docs/DEPLOY.md` に書いて残す。
 - GAS は V8 ランタイム。ES モジュールは使えないので、ファイルはグローバル関数で書き、名前の衝突に注意する（`Ledger_`, `Notion_` のように接頭辞をつける）。
 - 純粋関数（照合・判定・JSON 検証・Chatwork 文面の組み立て・Notion ブロック変換）は `tests/` で Node から単体テストできるように、GAS 固有の API に依存しない形で分ける。

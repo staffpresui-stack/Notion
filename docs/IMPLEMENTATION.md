@@ -1,5 +1,12 @@
 # 実装状況
 
+## finance@・共有ドライブへの移行
+
+Google側のGAS所有・共有ドライブ管理・ChatGPT所有／Drive接続はfinance@premiere-mode.co.jpへ変更しました。Notionのオーナー・内部インテグレーションはcontact@のままです。
+ユーザーが既存の共有ドライブ、フォルダ、本番／テスト台帳、finance@のGASを作成済みです。この版の実行はまだありません。
+`setupSharedTestWorkspace()` は既存構成を検証し、_testだけにマーカーを付け、不足フォルダ・台帳シート・サンプルマスタを準備します。_systemには書き込みません。
+`docs/SHARED_DRIVE_TEST.md` を現行の実行ガイドとします。以下のマイドライブ代用・旧アカウントに関する項目は過去の検証経緯です。
+
 ## 最新のユーザー側実機結果と段階2
 
 `42a5326` の接続確認とサンプル3件の実作成がユーザー側で成功しました。判定・本文・領域・日付をNotion上で確認済み、DRY_RUNはtrueへ復帰済みです。
@@ -47,14 +54,14 @@ Apps ScriptとGoogleログイン画面へのHTTPS接続はプロキシから403�
 初期化計画を取得するには、テスト専用の台帳スプレッドシートを先に用意してください。
 `dry_run_log` がなければ、そのシートと見出しだけを作成します（仕様で許可された記録先）。
 
-台帳IDにはテスト用を設定してください。GASの実行主体はstaff.presui@gmail.comです。
+台帳IDにはテスト用を設定してください。現在のGAS実行主体はfinance@premiere-mode.co.jpです。
 `NOTION_DB_TLDV_INBOX` も開発中はテスト用DBを指定してください。
 2DB構成のときは追加の `NOTION_DB_NONPROJECT_TEST` が必須です。
 GAS-Bにも `DRY_RUN=true` を設定します。
 
 ## 実機で未確認の項目
 
-- staff.presui@gmail.comでのApps Script認証・プロジェクト作成と権限許可
+- finance@premiere-mode.co.jpの新プロジェクトでの権限許可と接続確認
 - スクリプトプロパティの設定とNotionスキーマ取得
 - 台帳の実初期化、マスタ登録、Meetのファイル移動
 - ChatGPT予約タスクによるDriveへの無人書き込み

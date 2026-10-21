@@ -10,8 +10,8 @@ GAS エディタ「プロジェクトの設定」＞「スクリプト プロパ
 | SETUP_CREATE_TEST_DB | `false`（初期作成時のみ `true`） | `ENV=test` と組み合わせ、setupTestDatabasesによる管理ページ下のテストDB作成だけを許可。実行後falseに戻す |
 | ENV | `test` / `prod` | test のとき下の *_TEST を使う |
 | LEDGER_SPREADSHEET_ID | | 台帳スプレッドシート |
-| SHARED_DRIVE_ID | | 共有ドライブ「MTG記録」。今回のENV=testのマイドライブ検証では未設定可（setupTestWorkspace時は空欄） |
-| TEST_ENV_KEY | 自動生成 | setupTestWorkspaceが生成するテスト環境識別子。変更・削除しない |
+| SHARED_DRIVE_ID | | 共有ドライブ「MTG記録」。現在はfinance@の共有ドライブIDを設定。未設定可なのは旧ENV=test代用モードのみ |
+| TEST_ENV_KEY | 自動生成 | 共有ドライブはsetupSharedTestWorkspaceが_testの目印に採用・生成する識別子。_systemには付けない。変更・削除しない |
 | FOLDER_SYSTEM_ID / FOLDER_SYSTEM_TEST_ID | | `_system` / `_system/_test` |
 | NOTION_TOKEN ★ | | 内部インテグレーションのトークン（contact@ が作成） |
 | NOTION_VERSION | 公式で確認 | Notion API のバージョン |
@@ -25,7 +25,7 @@ GAS エディタ「プロジェクトの設定」＞「スクリプト プロパ
 | CHATWORK_TOKEN ★ | | 未設定なら投稿せず実行ログとdry_run_logに予定を表示。今回の検証では空欄のまま |
 | CHATWORK_ROOM_ID / CHATWORK_ROOM_ID_TEST | | 議事録確認ルーム／テスト用ルーム |
 | CHATWORK_ADMIN_ACCOUNT_IDS | | 停止・エラー時にメンションする人（カンマ区切り） |
-| WEBAPP_URL | | 確認画面のURL。GAS所有者を個人Gmailに変更したため公開方式は未確定。今は空欄 |
+| WEBAPP_URL | | 確認画面のURL。GAS所有者はfinance@のWorkspaceアカウント。ドメイン限定の公開方式・操作者識別は未検証。今は空欄 |
 | GENERATOR_MODE | `CHATGPT` | `CHATGPT` / `OPENAI_API` |
 | OPENAI_API_KEY ★ | | OPENAI_API のときだけ |
 | OPENAI_MODEL | | OPENAI_API のときだけ |

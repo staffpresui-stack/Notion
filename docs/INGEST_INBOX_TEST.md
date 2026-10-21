@@ -1,4 +1,6 @@
-# マイドライブとテスト台帳でのingestInbox検証
+# 旧マイドライブ代用構成のingestInbox検証
+
+この手順は旧staff.presuiの代用構成を記録したものです。現在のfinance@・共有ドライブでは [共有ドライブ手順](SHARED_DRIVE_TEST.md) を使い、このページのマイドライブ準備は実行しません。
 
 今回のGAS実行はユーザーが行います。CodexはGoogle・Notion・Chatworkへの実書き込みを行っていません。
 共有ドライブは社内確認待ちのため使いません。作成先はstaff.presuiのマイドライブに用意する開発専用フォルダだけです。
