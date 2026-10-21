@@ -167,3 +167,16 @@ test('MarkdownでDoc作成後に失敗しても再実行は同じDocを再利用
  const h=harness(),j=h.files['json-0'].data;delete h.files['json-1'];delete h.files['json-2'];delete h.files['doc-0'];delete h.docs['doc-0'];j.minutes_doc_id=null;j.minutes_markdown=fs.readFileSync('fixtures/minutes_markdown_sample.md','utf8');h.failMove();h.ctx.ingestInbox();const id=h.tables.minutes[0].minutes_doc_id;
  h.ctx.Stage2Content_.read=()=>h.ctx.Stage2Content_.blocks(h.ctx.Stage2Content_.markdown(j.minutes_markdown));h.ctx.retryInboxErrors();h.ctx.ingestInbox();assert.equal(h.tables.minutes[0].minutes_doc_id,id);assert.equal(Object.keys(h.docs).filter(k=>k.startsWith('file-')).length,1);assert.equal(h.creates.length,1);
 });
+
+test('ローカル同期の完了印を待ち、TXT・完了印も会議/完了フォルダへ移動する',()=>{
+ const h=harness();h.props.INGEST_BATCH=1;
+ for(const f of Object.values(h.files))if(f.id==='json-1'||f.id==='json-2')f.parents=['done'];
+ const f=h.files['json-0'];f.name='local_'+f.name;
+ h.ctx.DriveApp={getFileById:id=>({getBlob:()=>({getDataAsString:()=>typeof h.files[id].data==='string'?h.files[id].data:JSON.stringify(h.files[id].data)})})};
+ load(h.ctx,['transcriptText.js','localInboxReady.js']);
+ h.ctx.InboxIngest_.run();assert.equal(h.tables.minutes.length,0);
+ const payload=JSON.stringify(f.data),marker={id:'marker',name:f.name+'.ready.txt',mimeType:'text/plain',parents:['inbox'],appProperties:{},data:crypto.createHash('sha256').update(payload).digest('hex')};h.files.marker=marker;
+ h.files.exported={id:'exported',name:'transcript.txt',mimeType:'text/plain',parents:['raw-0'],appProperties:{},data:'原文'};
+ h.files['manifest-0'].data.transcript_text={file_id:'exported'};
+ h.ctx.InboxIngest_.run();assert.equal(h.tables.minutes.length,1);assert.deepEqual(h.files.marker.parents,['done'],JSON.stringify(h.logs));assert.deepEqual(h.files.exported.parents,[h.tables.minutes[0].meeting_folder_id]);assert.deepEqual(h.files['json-0'].parents,['done'],JSON.stringify({logs:h.logs,writes:h.writes,rows:h.tables.minutes}));
+});

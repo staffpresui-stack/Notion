@@ -1,0 +1,3 @@
+# パスは実際の絶対パスに置換。%を含むパスはcronに合わせてエスケープ。
+# Driveパソコン版はLinux非対応。この例は対応するPC/マウントでだけ利用してください。
+*/15 * * * * /ABS/PATH/TO/node /ABS/PATH/TO/Notion/local/run.cjs --test-root '/ABS/PATH/TO/MTG記録/_system/_test' --codex /ABS/PATH/TO/codex --run >> '/ABS/PATH/TO/MTG記録/_system/_test/local-run.log' 2>&1

@@ -1,3 +1,7 @@
+# ローカルCodex生成への変更（最新）
+
+d4a570eの参照出力・MarkdownのDoc表示・04のNotion取り込みはユーザー実機合格。クラウドのアップロードは安全チェックで失敗。今回OPENAI_APIは不採用とし、GAS-Aに原文TXTの新規書出しと任意15分トリガー、PCにread-onlyのCodex生成とJSON検証・非上書き保存・同期完了印、launchd/cron例を追加。GASは完了印のハッシュが一致するまで待ちます。GASのDocs読取・既存TXTの非上書き・manifest追記・範囲外拒否、ローカルの重複防止・原文変更・スキーマ・同期完了と既存ingestをモックで検証。PC実機、GAS実行、Plus認証、Drive同期、launchdは未実施。手順はLOCAL_CODEX_TEST.md。CLIは同梱0.163.0ヘルプ、Plusログイン対応はOpenAI公式GitHub README、Docsタブ仕様は公式本文で確認。開発者サイト本文はこのネットワークから取得できませんでした。153件のテストとbuild/check/smokeが成功。
+
 # 予約タスクのJSON単独出力への対応（最新）
 
 通常チャットで文字起こしタブの原文取得と共有ドライブへのJSONアップロードはユーザー実機合格。親指定のネイティブDoc作成はOAuth接続でINVALID_ARGUMENTとなるため、ChatGPTはminutes_markdown全文入りJSONだけをアップロードし、GAS-AがDocを作る形に指示文・SPEC・スキーマ説明を変更しました。Markdownの見出し・箇条書き・番号付き・表からDoc用HTMLとNotion要素を生成する処理を追加。参照ファイル不在はテスト中だけ空扱いで続行し、要確認へ記録します。無人タスクのアップロード許可の持続は未確認です。参照書き出しと合わせてローカル141件のテストが成功。実GAS・予約タスク実行・実Doc表示の確認は行っていません。

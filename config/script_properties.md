@@ -26,9 +26,7 @@ GAS エディタ「プロジェクトの設定」＞「スクリプト プロパ
 | CHATWORK_ROOM_ID / CHATWORK_ROOM_ID_TEST | | 議事録確認ルーム／テスト用ルーム |
 | CHATWORK_ADMIN_ACCOUNT_IDS | | 停止・エラー時にメンションする人（カンマ区切り） |
 | WEBAPP_URL | | 確認画面のURL。GAS所有者はfinance@のWorkspaceアカウント。ドメイン限定の公開方式・操作者識別は未検証。今は空欄 |
-| GENERATOR_MODE | `CHATGPT` | `CHATGPT` / `OPENAI_API` |
-| OPENAI_API_KEY ★ | | OPENAI_API のときだけ |
-| OPENAI_MODEL | | OPENAI_API のときだけ |
+| GENERATOR_MODE | `LOCAL_CODEX`（今回の設定） | `LOCAL_CODEX` / `CHATGPT`（手動対話互換）。OPENAI_APIは拒否 |
 | FREE_MAIL_DOMAINS | `gmail.com,yahoo.co.jp,outlook.jp,outlook.com,icloud.com,hotmail.com` | 顧客判定に使わないドメイン |
 | INGEST_BATCH | `5` | 1回の取り込み件数 |
 | TLDV_WAIT_MIN | `60` | tl;dv 照合までの待ち時間 |
@@ -61,3 +59,7 @@ GAS エディタ「プロジェクトの設定」＞「スクリプト プロパ
 段階3の修正版は新しいプロパティを追加しません。setupReviewNotionStatusでテストDBの確認状態と既存ページを準備します。更新・計測の手順は docs/REVIEW_UPDATE.md を参照してください。
 
 GAS-Bの具体値・作成手順は docs/ORGANIZER_TEST.md。今回はfinance@だけをコードで許可します。登録情報は_test/_organizersからGAS-Aへ同期するため、CORE_WEBAPP_URL・台帳ID・NotionトークンはGAS-Bに不要です。
+
+## PCのCodex生成
+
+追加の秘密プロパティは不要です。手順は `docs/LOCAL_CODEX_TEST.md`。exportTranscriptTextsと任意のsetupTranscriptExportTriggerをGAS-Aで実行します。FOLDER_INBOX_RAW_TEST_IDは既存値を維持。GAS-AにDocs v1サービスを追加しますがOAuthスコープ追加はありません。

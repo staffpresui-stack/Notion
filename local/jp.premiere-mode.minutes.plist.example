@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>jp.premiere-mode.minutes</string>
+  <key>ProgramArguments</key><array>
+    <string>/ABS/PATH/TO/node</string>
+    <string>/ABS/PATH/TO/Notion/local/run.cjs</string>
+    <string>--test-root</string><string>/ABS/PATH/TO/MTG記録/_system/_test</string>
+    <string>--codex</string><string>/ABS/PATH/TO/codex</string>
+    <string>--run</string>
+  </array>
+  <key>StartInterval</key><integer>900</integer>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>/ABS/PATH/TO/MTG記録/_system/_test/local-run.log</string>
+  <key>StandardErrorPath</key><string>/ABS/PATH/TO/MTG記録/_system/_test/local-error.log</string>
+</dict></plist>

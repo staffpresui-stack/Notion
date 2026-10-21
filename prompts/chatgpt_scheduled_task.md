@@ -1,3 +1,5 @@
+> 現在の運用：クラウド予約タスクのアップロードは安全チェックで失敗と実機報告済みです。接続の「すべて許可」は使わず、無人生成はprompts/codex_local_task.mdとdocs/LOCAL_CODEX_TEST.mdのPC方式へ移します。以下は手動対話の互換用です。PC方式と同時生成しません。OPENAI_APIへの切替もしません。
+
 # ChatGPT 予約タスクの指示文（GENERATOR_MODE=CHATGPT）
 
 - 設定場所：ChatGPT（premiere・Plus、Google Driveコネクタはfinance@）で、Cloud 実行の予約タスクを作り、下の「指示文」を貼る。実行間隔は1時間ごと（仮）。

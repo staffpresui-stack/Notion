@@ -23,7 +23,7 @@ WorkspaceのDOMAIN限定Webアプリは設計上の候補ですが、公開・�
 | 主の経路 | 自社が Meet リンクを発行する会議（社外参加者を含む）。予定ごとに主催者が「会議の記録」（録画・文字起こし・Gemini メモ）をオンにする |
 | 補助の経路 | 相手主催など Meet で記録できない会議。tl;dv（会社で1アカウント・無料）。Notion のネイティブ連携で受信DB に入る。無料のワークフロートリガーは生涯20回（2026-10-19 時点で残り17） |
 | 重複 | 同じ会議に Meet と tl;dv の両方がある場合は Meet を使い、tl;dv 側は「対象外（Meet優先）」 |
-| 議事録の生成 | ChatGPT Plus の予約タスク（Cloud 実行）。代替として GAS から OpenAI API を呼ぶモードも実装する（`GENERATOR_MODE`） |
+| 議事録の生成 | PCのCodex CLI（ChatGPT Plusログイン）＋ローカル保存スクリプト（LOCAL_CODEX）。OPENAI_APIは不採用 |
 | 書き込みの担当 | Notion・フォルダ移動・Chatwork・台帳は GAS-A（finance@）。Meet ファイルの最初の移動だけ GAS-B（主催者の権限） |
 | 対象外 | 録画の動画を tl;dv から取り込むこと（無料ではダウンロード不可）。川戸さんのワークスペースへの書き込み |
 
@@ -136,19 +136,21 @@ MTG記録/
 
 ## 7. 議事録の生成
 
-### 7-1. ChatGPT 予約タスク（`GENERATOR_MODE=CHATGPT`、既定）
+### 7-1. ChatGPT 予約タスク（旧CHATGPT方式・手動対話の互換用）
 - ChatGPTはtranscript_sourceに従い、別ファイルまたはGeminiメモ内の指定文字起こしタブを読みます。指定タブを接続機能で読めない場合は生成せずエラー記録とします。メモの要約で代用しません。テスト用の予約タスク指示文は_system/_testを既定とします。
 - ChatGPT は `00_受信/*/manifest.json` のうち `status: "ready"` で、`inbox/{folder_key}.json` も `inbox/_done/{folder_key}.json` も無いものを処理する。
 - 出力は `inbox/{folder_key}.json` **1ファイルだけ**。minutes_doc_id=null、minutes_markdownに議事録全文を入れ、UTF-8・MIME application/jsonのファイルを共有ドライブの_test/inboxへアップロードします。ChatGPTはネイティブDocの新規作成・マイドライブへの代用作成をしません。GAS-AがMarkdownからDocを作成・配置します。指示文は `prompts/chatgpt_scheduled_task.md`。
 - 通常チャットでGeminiの指定文字起こしタブの原文取得とJSONの親指定アップロードが実機合格。OAuth／委任接続でネイティブDocを親指定作成するとINVALID_ARGUMENTになる制約を確認済みです。親なしDoc作成が可能でも使いません。予約タスクでの無人アップロードと「常に許可」の持続は未確認です。承認待ち・失敗は未完了として扱います。
 - 失敗時は{folder_key}.error.txtをUTF-8・MIME text/plainとして同じinboxへアップロードします。エラーテキストも保存できない場合はタスク結果へ理由を残し、保存成功とは報告しません。
 - テスト中だけ、ref/masters.jsonまたはprojects.jsonが存在しなければ該当一覧を空として続行し、confidence=低、要確認の本文・open_questionsへ記録します。所在・所属不明は社外/顧客未特定（要確認）等の暫定値で仕分け待ちへ回し、存在しない人・顧客・PJ IDは作りません。参照が存在する場合のenv不一致・読み取り拒否・不正JSONは不在と区別して停止します。
-- 判定JSONを書けない場合は保存成功扱いにせず実機結果を報告します。OPENAI_APIへの切替は別途人が判断し、今回自動切替しません。
+- 判定JSONを書けない場合は保存成功扱いにせず実機結果を報告します。OPENAI_APIは最新方針で採用しません。クラウドの書込許可を広げず、7-2のPC方式へ切り替えます。
 
-### 7-2. OpenAI API（`GENERATOR_MODE=OPENAI_API`、代替）
-- GAS-A が 00_受信 の ready を拾い、文字起こし（Doc のテキスト）と manifest、`ref/*.json` を入力に、OpenAI の Responses API を呼ぶ。指示文は `prompts/chatgpt_scheduled_task.md` の本文を流用し、出力は JSON Schema 指定（structured output）で判定 JSON＋議事録本文を受け取る。
-- モデル名は `OPENAI_MODEL`（スクリプト プロパティ）で指定。API キーは `OPENAI_API_KEY`。
-- 文字起こしが長い場合は、先頭から順に分割して要約→統合の2段にする（1回の GAS 実行6分以内に収める。収まらなければ次回に続きを処理できるよう途中結果を `_system/inbox/_work/` に保存）。
+### 7-2. PC上のCodex（GENERATOR_MODE=LOCAL_CODEX、今回採用）
+- 予約タスクのクラウド書込は安全チェックで失敗とユーザー実機報告済み。高リスク設定にせず、OpenAI APIモード・APIキーは使いません。CLIはChatGPTのpremiere・Plusでログイン。推論はCodexクラウド、Driveの読み書きはPC上の検証スクリプトです。
+- GAS-A exportTranscriptTextsはENV=test・検証済み_test/00_受信内のready manifestを対象に、Docs includeTabsContentで指定タブ原文を読み、transcript.txtを新規出力。別ファイルのDocs/text/plainも対応。Docs・録画・メモは変更しません。既存TXTは同内容のみ再利用し、異なれば停止。manifestは既存項目を保ちtranscript_text（file_id/name/sha256/source/exported_at/characters）を一度追記。追記済みは固定スナップショットとして再出力しません。DRY_RUNは予定ログだけ。任意の15分トリガーあり。
+- PCはDriveパソコン版の_test内TXT/manifest/refだけを読み、ハッシュ照合。Codexは承認never・read-only・個人config/接続ツール無効・資料は標準入力。スクリプトがJSONスキーマ・会議キー・PJ ID・本文を検証し、minutes_doc_id=null、minutes_markdown全文のJSONをinbox/local_{folder_key}.jsonへ非上書き保存。1回新規1会議、4分で生成停止。参照不在のテスト時だけ空扱い＋確信度低・要確認。破損・環境不一致は停止します。
+- 同期順を保証できないため、JSON保存後に同名.json.ready.txtへUTF-8 JSONのSHA-256を保存。GASはlocal_ JSONの完了印とハッシュが一致するまで取り込まず待機。従来の非local_ JSONの互換性は維持。JSONと印は_done、TXTは会議フォルダへ移動。モデル失敗時は既存を上書きせず{folder_key}.error.txt（text/plain）を保存します。
+- テスト中の全業務ファイル書込は_test内のみ。ロック・完了記録・一時生成出力も_test/_local_codexに保存。再実行の重複を抑制。PCのスリープ/認証切れ/同期失敗/利用枠で未完了となる点は監視が必要。実機設定・復旧はLOCAL_CODEX_TEST.mdを参照。クラウド予約タスクと同時に生成しません。
 
 ---
 
@@ -315,7 +317,8 @@ Notion：MTG議事録「{議事録名}」（{作成済み|作成待ち}）
 | GAS-B `moverRun` | 各主催者 | 15分 |
 | GAS-A `ingestTldv` | finance@ | 10分 |
 | GAS-A `ingestInbox` | finance@ | 10分 |
-| GAS-A `generatorRun`（OPENAI_API モードのみ） | finance@ | 10分 |
+| GAS-A `transcriptExportTick_`（任意・テストTXT出力） | finance@ | 15分 |
+| PC `local/run.cjs`（Codex生成） | PCログイン利用者 | launchd等で15分 |
 | GAS-A `exportRef`（projects.json / masters.json） | finance@ | 毎朝6時 |
 | GAS-A `digestRun`（朝の一覧・催促・停止検知） | finance@ | 毎朝9時＋1時間ごとに停止検知 |
 

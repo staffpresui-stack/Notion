@@ -12,3 +12,7 @@ setup-inputs/
 *credentials*.json
 *.pem
 *.key
+
+# PC固有パス・生成資料は共有テスト領域に置き、Gitに含めません。
+local/*.local.*
+_local_codex/

@@ -1,3 +1,5 @@
+現在の生成方式はPCのCodex CLI（LOCAL_CODEX）です。GAS-AへのDocsサービス追加とPC設定は[LOCAL_CODEX_TEST.md](LOCAL_CODEX_TEST.md)を参照してください。OpenAI API方式は採用しません。
+
 # 主催者用GAS-Bの実装後の手順
 
 GAS-Bの作成・設定・アクセスしているユーザーとしてのデプロイ・テスト会議による検証は [ORGANIZER_TEST.md](ORGANIZER_TEST.md) を参照してください。GAS-Aとは別プロジェクトです。段階3修正版のWeb画面がキャッシュされる場合はcmd+shift+Rで強制再読み込みしてください。

@@ -17,6 +17,8 @@ test('設定検査は不足キーだけを返し、秘密値を出力しませ�
   assert.ok(r.missing.includes('FOLDER_SYSTEM_TEST_ID'));
   assert.ok(!JSON.stringify(r).includes('must-not-log'));
   assert.equal(Config_.inspect(configured).ok, true);
+  assert.equal(Config_.inspect({...configured,GENERATOR_MODE:'LOCAL_CODEX'}).ok,true);
+  assert.equal(Config_.inspect({...configured,GENERATOR_MODE:'OPENAI_API',OPENAI_API_KEY:'test-only',OPENAI_MODEL:'test'}).ok,false);
 });
 test('本番切替・不正な真偽値・本番IDの流用を拒否します', () => {
   const { Config_ } = load(['config.js']);

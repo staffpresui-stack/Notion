@@ -35,6 +35,8 @@
 
 - 通常ChatGPTチャットから文字起こしタブの原文読取とJSONアップロードは実機合格。ネイティブDocの親指定作成はOAuth接続の制約で失敗するため、CHATGPTもminutes_doc_id=null・minutes_markdown全文入りJSONだけをアップロードし、GAS-Aが見出し・リスト・表を含むDocを作ります。エラーはtext/plainの.txtアップロード。テスト中だけ参照ファイル不在は空扱い＋要確認で続行。無人予約タスクの継続許可は未確認です。
 
+- d4a570eはユーザー実機で参照出力・MarkdownのDoc化・Notion取り込みまで合格。クラウド予約タスクのDrive書込は安全チェックで失敗。高リスクの接続許可は使わず、OPENAI_API方式は採用しません。現在の生成方式はPC上のChatGPTログイン済みCodex CLI（LOCAL_CODEX）。GAS-Aが原文TXTを新規出力し、Codexはツール無効・read-onlyで判定JSONを返し、ローカルrunnerが検証して_test/inboxへ保存します。同期完了印のハッシュが一致してからGASが取り込みます。最新手順は `docs/LOCAL_CODEX_TEST.md`。元のDocs・既存TXTは上書きしません。PC実機の認証・同期・定期実行は未確認です。
+
 ## 1. 最初に読む順番
 
 1. このファイル（全体・ルール・段階）
@@ -85,8 +87,8 @@
         │                                       │
         │                       [GAS-A] が query → Meet と照合 → Meet が無ければ 00_受信/{key}/ に Doc 化
         ▼
-[ChatGPT Plus 予約タスク（Cloud）]  00_受信 を読み、議事録 Doc と判定 JSON を _system/inbox/ に置く
-        │                     （代替：GAS-A が OpenAI API を直接呼ぶ GENERATOR_MODE=OPENAI_API）
+[PCのCodex CLI（ChatGPT Plusログイン）] TXT・manifest・ref → 判定JSON（本文入り）
+        │                     検証スクリプトが_test/inboxへ保存（OPENAI_APIは不採用）
         ▼
 [GAS-A 本体（finance@ 所有）]
    inbox 取り込み → 台帳（スプレッドシート）→ 会議フォルダ作成・配置
@@ -121,7 +123,7 @@
    src/chatworkClient.js        … Chatwork API v2
    src/ingestTldv.js            … 受信DB の取り込み・Meet 照合
    src/ingestInbox.js           … inbox の取り込み・判定・配置・Notion 作成・通知
-   src/generatorOpenAI.js       … GENERATOR_MODE=OPENAI_API のときの議事録生成（代替）
+   src/transcriptText.js        … 原文TXTのテスト受信への新規書き出し
    src/review.js                … 確認画面のサーバー処理（確定・修正・保留・対象外・再実行）
    src/tasks.js                 … タスク提案の承認・反映・取り消し（段階5）
    src/digest.js                … 朝の一覧カード・停止検知
@@ -200,4 +202,4 @@
 - MTG議事録の「MTG URL」に入れる値（会議フォルダの URL か Meet の URL か。`NOTION_MTG_URL_SOURCE`）
 - Chatwork の投稿アカウント（contact@ の Chatwork か Bot 用か）
 - 共有ドライブ内の閲覧権限のランク（`_system`・`社内/経営` のアクセス制限の方法）
-- 議事録生成を ChatGPT 予約タスクで続けるか、OpenAI API に切り替えるか（`GENERATOR_MODE`）
+- 議事録生成はLOCAL_CODEXに決定済みです。PCのOS・Driveパソコン版・マウント先はユーザー実機で確認します。OPENAI_APIは採用しません。

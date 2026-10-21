@@ -8,7 +8,10 @@ var InboxIngest_ = (function () {
     var ledger = Stage2Ledger_.open(SpreadsheetApp.openById(c.LEDGER_SPREADSHEET_ID)), masters = ledger.masters();
     var env = NotionTestEnvironment_.open(true), minutes = env.schema(env.ids.minutes, 'minutes'), tasks = env.schema(env.ids.tasks, 'tasks');
     var inbox = drive.folder(drive.root.id, 'inbox', false), done = drive.folder(inbox.id, '_done', false), raw = drive.folder(drive.root.id, '00_受信', false);
-    var rows = ledger.rows('minutes'), files = drive.children(inbox.id).filter(function (f) { return f.name.endsWith('.json'); });
+    var rows = ledger.rows('minutes'), children = drive.children(inbox.id), files = children.filter(function (f) {
+      if (!f.name.endsWith('.json')) return false;
+      return !f.name.startsWith('local_') || LocalInboxReady_.check(drive, f, children);
+    });
     rows.forEach(function (r) { var s = state(r); if (s.jsonId && !s.finished && !s.error && !files.some(function (f) { return f.id === s.jsonId; })) files.push(drive.within(s.jsonId)); });
     files = files.filter(function (f) { return !rows.some(function (r) { var s = state(r); return s.jsonId === f.id && s.error && s.modifiedTime === f.modifiedTime; }); });
     if (onlyMeetingKey) { var target = rows.find(function (r) { return r.meeting_key === onlyMeetingKey; }); var targetId = state(target).jsonId; files = files.filter(function (f) { return f.id === targetId; }); }
@@ -19,6 +22,7 @@ var InboxIngest_ = (function () {
       var row = null, steps = {}, key = 'invalid:' + file.id;
       function save() { row.step_done_json = JSON.stringify(steps); ledger.save(row); }
       try {
+        if (file.name.startsWith('local_') && !LocalInboxReady_.check(drive, file, drive.children(inbox.id).concat(drive.children(done.id)))) return;
         var parsed = InboxPlan_.judgement(drive.readJSON(file.id)), j = parsed.data; key = j.meeting_key;
         if ((file.appProperties || {}).meeting_key && file.appProperties.meeting_key !== key) throw new Error('JSONファイルの会議マーカーと内容が一致しません。');
         if (key.length > 180) throw new Error('会議キーが長すぎます。');
@@ -41,6 +45,11 @@ var InboxIngest_ = (function () {
           if (f.mimeType === 'application/vnd.google-apps.folder' || !(f.parents || []).some(function (p) { return p === folder.id || row && p === row.meeting_folder_id; })) throw new Error('生データが会議の受信・格納フォルダ内にありません。');
           rawFiles.push({ id: f.id, kind: kind });
         });
+        if (manifest.transcript_text) {
+          var exported = drive.within(manifest.transcript_text.file_id);
+          if (exported.mimeType !== 'text/plain' || exported.name !== 'transcript.txt' || !(exported.parents || []).some(function(p){return p === folder.id || row && p === row.meeting_folder_id;})) throw new Error('書き出した文字起こしが会議フォルダ内にありません。');
+          if (!rawFiles.some(function(f){return f.id === exported.id;})) rawFiles.push({id:exported.id,kind:'transcript_text'});
+        }
         var docId = steps.minutesDocId || j.minutes_doc_id, blocks;
         if (docId) {
           var doc = drive.within(docId);
@@ -143,6 +152,12 @@ var InboxIngest_ = (function () {
             row.chatwork_message_id = sent.message_id; steps.chatwork = 'sent'; save();
           }
         } else if (steps.chatwork === 'pending') throw new Error('Chatwork投稿結果が不明です。二重投稿しません。');
+        if (file.name.startsWith('local_')) {
+          var localMarkers = drive.children(inbox.id).concat(drive.children(done.id));
+          if (!LocalInboxReady_.check(drive, file, localMarkers)) throw new Error('ローカルJSONの同期完了を確認できません。');
+          var marker = localMarkers.filter(function(f){return f.name === file.name+'.ready.txt';})[0];
+          drive.move(marker.id, done.id, 'local_ready', key);
+        }
         if (!steps.jsonDone) { drive.move(file.id, done.id, 'judgement', key); steps.jsonDone = true; save(); }
         if (!steps.rawDone) {
           if (!drive.children(folder.id).length) {
