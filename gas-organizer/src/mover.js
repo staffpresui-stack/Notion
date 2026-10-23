@@ -11,13 +11,14 @@ function moverRun(e){return Organizer_.lock(function(){
   events.forEach(function(event){
     if(Date.now()-started>240000)return;
     try{var plan=MoverPlan_.event(event,email,now,c.MOVER_WAIT_MIN,c.MOVER_MODE);if(!plan){if(c.MOVER_MODE==='AUTO')return;results.push({eventId:event.id,status:'対象外・終了待ち',message:'自分主催のMeet付き予定、終了待ち時間を確認してください。'});return;}
-    var stateKey='mover:'+Organizer_.hash(plan.key),saved=user.getProperty(stateKey),state=saved?JSON.parse(saved):{};
+    if(c.ENV==='prod'&&Date.parse(plan.manifest.start)<Date.parse(c.PRODUCTION_START_AT))return;
+    var stateKey=(c.ENV==='prod'?'mover:prod:':'mover:')+Organizer_.hash(plan.key),saved=user.getProperty(stateKey),state=saved?JSON.parse(saved):{};
     if(state.ready){results.push({meeting_key:plan.key,status:'処理済み',folderId:state.folderId,manifestId:state.manifestId,transcript_source:state.transcriptSource||null});return;}
     var folder=drive.child(drive.raw.id,plan.folderKey,'meeting_raw',plan.key,false),meta={};
     (event.attachments||[]).forEach(function(a){if(a.fileId&&!meta[a.fileId])meta[a.fileId]=drive.get(a.fileId);});
-    var files=MoverPlan_.files(event.attachments,meta);files.ignored.forEach(function(f){console.log('判定できない添付は移動しません: '+f.name);});
+    var files=MoverPlan_.files(event.attachments,meta);
     var items=Object.keys(files.found);
-    if(c.MOVER_MODE==='AUTO'&&!items.length)return;
+    if(c.MOVER_MODE==='AUTO'&&!items.length)return;files.ignored.forEach(function(f){console.log('判定できない添付は移動しません: '+f.name);});
     items.forEach(function(k){drive.validateSource(files.found[k],folder,plan.key,email);});
     var transcriptSource=OrganizerTranscript_.resolve(files);
     if(transcriptSource)files.missing=files.missing.filter(function(k){return k!=='transcript';});

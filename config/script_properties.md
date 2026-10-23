@@ -1,3 +1,5 @@
+最新の既定はGEMINI_NOTES。本番の全設定値は[本番切替ガイド](../docs/GEMINI_NOTES_PRODUCTION.md)を参照。LOCAL_CODEXは恒久実行しません。
+
 # スクリプト プロパティ一覧（値はここに書かない）
 
 GAS エディタ「プロジェクトの設定」＞「スクリプト プロパティ」に登録する。秘密値（★）は Git に入れない。
@@ -26,7 +28,7 @@ GAS エディタ「プロジェクトの設定」＞「スクリプト プロパ
 | CHATWORK_ROOM_ID / CHATWORK_ROOM_ID_TEST | | 議事録確認ルーム／テスト用ルーム |
 | CHATWORK_ADMIN_ACCOUNT_IDS | | 停止・エラー時にメンションする人（カンマ区切り） |
 | WEBAPP_URL | | 確認画面のURL。GAS所有者はfinance@のWorkspaceアカウント。ドメイン限定の公開方式・操作者識別は未検証。今は空欄 |
-| GENERATOR_MODE | `LOCAL_CODEX`（今回の設定） | `LOCAL_CODEX` / `CHATGPT`（手動対話互換）。OPENAI_APIは拒否 |
+| GENERATOR_MODE | `GEMINI_NOTES` | PC不要。旧LOCAL_CODEX/CHATGPTはtest互換だけ。OPENAI_APIは拒否 |
 | FREE_MAIL_DOMAINS | `gmail.com,yahoo.co.jp,outlook.jp,outlook.com,icloud.com,hotmail.com` | 顧客判定に使わないドメイン |
 | INGEST_BATCH | `5` | 1回の取り込み件数 |
 | TLDV_WAIT_MIN | `60` | tl;dv 照合までの待ち時間 |
@@ -76,3 +78,7 @@ GAS-Bの具体値・作成手順は docs/ORGANIZER_TEST.md。今回はfinance@�
 | A | LOCAL_FAILURE_ALERT_COUNT | 3。1〜20回。直近4時間のMac連続失敗 |
 
 AUTOMATION_ALERT:*は監視の通知重複防止・回復状態を自動保存。手動作成・リセットしません。setupAutomationTriggerは旧TXT単独トリガーだけ解除して統合トリガーへ移行します。
+
+## GEMINI_NOTES本番・tl;dv監視
+
+ENV=prod時はFOLDER_INBOX_RAW_ID、NOTION_DB_MINUTES、NOTION_DB_TASKS、PRODUCTION_START_AT、CHATWORK_TOKENが必要。CHATWORK_ROOM_IDは451196858固定。TLDV_CALENDAR_IDSでfinance@へ読取共有した業務カレンダーを設定、TLDV_RECEIVE_TIMEOUT_MINは120（15〜1440分）。無料枠の残数はsettingsのtldv_quota:<アカウントメール>にremaining/checked_atのJSONで登録。APIから自動取得した残数ではありません。CLASSIFICATION_RULES_JSONは部署/会議名キーワードの配列、未指定は6部署の正式名。

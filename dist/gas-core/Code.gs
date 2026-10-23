@@ -37,15 +37,15 @@ var Automation_=(function(){
   }
   return {tick:tick,monitor:monitor,limits:limits};
 })();
-function automationTick_(){if(String(Session.getEffectiveUser().getEmail()||'').toLowerCase()!=='finance@premiere-mode.co.jp')throw new Error('統合トリガーはfinance@専用です。');Stage2Drive_.config();return Ledger_.withLock(Automation_.tick);}
-function setupAutomationTrigger(){assertFinanceOperator_();return Ledger_.withLock(function(){var c=Stage2Drive_.config();Automation_.limits(c);Stage2Drive_.open(c);var own=ScriptApp.getProjectTriggers().filter(function(t){return t.getHandlerFunction()==='automationTick_';});if(own.length>1)throw new Error('統合トリガーが重複しています。');if(c.DRY_RUN==='true'){console.log('15分ごとの統合トリガーを1個作り、旧TXT単独トリガーを解除する予定です。');return {dryRun:true};}
- var trigger=own[0]||ScriptApp.newTrigger('automationTick_').timeBased().everyMinutes(15).create();ScriptApp.getProjectTriggers().filter(function(t){return t.getHandlerFunction()==='transcriptExportTick_';}).forEach(function(t){ScriptApp.deleteTrigger(t);});console.log('TXT出力→取り込み→監視の統合トリガーを設定しました。');return {triggerId:String(trigger.getUniqueId())};});}
-function removeAutomationTrigger(){assertFinanceOperator_();return Ledger_.withLock(function(){var c=Stage2Drive_.config();if(c.DRY_RUN==='true'){console.log('自分の統合トリガーだけを解除する予定です。');return;}ScriptApp.getProjectTriggers().filter(function(t){return t.getHandlerFunction()==='automationTick_';}).forEach(function(t){ScriptApp.deleteTrigger(t);});console.log('統合トリガーを解除しました。');});}
+function automationTick_(){if(String(Session.getEffectiveUser().getEmail()||'').toLowerCase()!=='finance@premiere-mode.co.jp')throw new Error('統合トリガーはfinance@専用です。');if(typeof ServiceConfig_!=='undefined'&&ServiceConfig_.isNotes())return Ledger_.withLock(NotesPipeline_.run);Stage2Drive_.config();return Ledger_.withLock(Automation_.tick);}
+function setupAutomationTrigger(){assertFinanceOperator_();return Ledger_.withLock(function(){var notes=typeof ServiceConfig_!=='undefined'&&ServiceConfig_.isNotes(),c=notes?ServiceConfig_.load():Stage2Drive_.config();if(notes)NotesPipeline_.context();else{Automation_.limits(c);Stage2Drive_.open(c);}var own=ScriptApp.getProjectTriggers().filter(function(t){return t.getHandlerFunction()==='automationTick_';});if(own.length>1)throw new Error('統合トリガーが重複しています。');if(c.DRY_RUN==='true'){console.log('15分ごとの統合トリガーを1個作り、旧TXT単独トリガーを解除する予定です。');return {dryRun:true};}
+ var trigger=own[0]||ScriptApp.newTrigger('automationTick_').timeBased().everyMinutes(15).create();ScriptApp.getProjectTriggers().filter(function(t){return (notes?['transcriptExportTick_','refExportTick_','organizerSyncTick_']:['transcriptExportTick_']).includes(t.getHandlerFunction());}).forEach(function(t){ScriptApp.deleteTrigger(t);});console.log(notes?'GEMINI_NOTES：Meet/tl;dv→議事録→Notion/Chatworkの統合トリガーを設定しました。':'TXT出力→取り込み→監視の統合トリガーを設定しました。');return {triggerId:String(trigger.getUniqueId())};});}
+function removeAutomationTrigger(){assertFinanceOperator_();return Ledger_.withLock(function(){var c=typeof ServiceConfig_!=='undefined'&&ServiceConfig_.isNotes()?ServiceConfig_.load():Stage2Drive_.config();if(c.DRY_RUN==='true'){console.log('自分の統合トリガーだけを解除する予定です。');return;}ScriptApp.getProjectTriggers().filter(function(t){return t.getHandlerFunction()==='automationTick_';}).forEach(function(t){ScriptApp.deleteTrigger(t);});console.log('統合トリガーを解除しました。');});}
 
 
 // config.js
 var Config_ = (function () {
-  var defaults = { ENV: 'test', DRY_RUN: 'true', GENERATOR_MODE: 'LOCAL_CODEX',
+  var defaults = { ENV: 'test', DRY_RUN: 'true', GENERATOR_MODE: 'GEMINI_NOTES',
     NOTION_VERSION: '2025-09-03', TASK_DB_MODE: 'single', NOTION_MTG_URL_SOURCE: 'none', NOTION_REQUESTER_TYPE: 'people' };
   // テスト対象を本番IDで代用しません。不明な値は安全側で拒否します。
   function inspect(values, profile) {
@@ -54,9 +54,10 @@ var Config_ = (function () {
     if (c.ENV !== 'test') required.push('SHARED_DRIVE_ID');
     if (!['test', 'prod'].includes(c.ENV)) errors.push('ENV は test または prod を指定してください。');
     if (!['true', 'false'].includes(c.DRY_RUN)) errors.push('DRY_RUN は true または false を指定してください。');
-    if (c.ENV !== 'test') errors.push('この開発環境はENV=test専用です。');
+    if(c.ENV==='prod'&&c.GENERATOR_MODE==='GEMINI_NOTES'&&typeof ServiceConfig_!=='undefined'){try{ServiceConfig_.load(c);}catch(e){errors.push(e.message);}return {ok:!errors.length&&!missing.length,missing:missing,errors:errors};}
+    if (c.ENV !== 'test') errors.push('本番はGEMINI_NOTES専用です。');
     if (!['people', 'rich_text', 'email'].includes(c.NOTION_REQUESTER_TYPE)) errors.push('NOTION_REQUESTER_TYPE が不正です。');
-    if (!['CHATGPT', 'LOCAL_CODEX'].includes(c.GENERATOR_MODE)) errors.push('GENERATOR_MODE が不正です。');
+    if (!['CHATGPT', 'LOCAL_CODEX','GEMINI_NOTES'].includes(c.GENERATOR_MODE)) errors.push('GENERATOR_MODE が不正です。');
     if (!['single', 'dual'].includes(c.TASK_DB_MODE)) errors.push('TASK_DB_MODE が不正です。');
     if (!['none', 'folder', 'meet'].includes(c.NOTION_MTG_URL_SOURCE)) errors.push('NOTION_MTG_URL_SOURCE が不正です。');
     required = required.concat(['FOLDER_SYSTEM_TEST_ID', 'NOTION_DB_MINUTES_TEST', 'NOTION_DB_TASKS_TEST']);
@@ -673,7 +674,7 @@ var InboxIngest_ = (function () {
 })();
 
 function ingestInbox() {
-  if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_(); return Ledger_.withLock(InboxIngest_.run); }
+  if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_();if(typeof ServiceConfig_!=='undefined'&&ServiceConfig_.isNotes())return Ledger_.withLock(NotesPipeline_.run);return Ledger_.withLock(InboxIngest_.run); }
 
 function retryInboxErrors() {
   if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_();
@@ -829,6 +830,149 @@ var MeetingRules_ = (function () {
 })();
 
 
+// notesPipeline.js
+var NotesPipeline_=(function(){
+  function context(){var c=ServiceConfig_.load(),drive=ServiceDrive_.open(c);drive.within(c.LEDGER_SPREADSHEET_ID);var ledger=Stage2Ledger_.open(SpreadsheetApp.openById(c.LEDGER_SPREADSHEET_ID),true),notion=ServiceNotion_.open(c),minutes=notion.schema(c.minutes),tasks=notion.schema(c.tasks),inboxSchema=notion.schema(c.NOTION_DB_TLDV_INBOX);
+    var differences=NotionFixturePlan_.compareSchema('minutes',minutes.properties).differences.filter(function(d){return d.kind==='項目名・型';});if(differences.length)throw new Error('本番/テスト議事録DBの項目名・型を確認してください：'+differences.map(function(d){return d.name;}).join('、'));
+    var relation=minutes.properties['関連するプロジェクト'].relation||{},normalize=function(id){return String(id||'').replace(/-/g,'');};if(normalize(relation.data_source_id)!==normalize(tasks.sourceId)&&!(relation.database_id&&normalize(relation.database_id)===normalize(tasks.databaseId)))throw new Error('議事録の関連プロジェクトが別環境の案件DBを参照しています。');
+    var p=minutes.properties['確認状態'];if(!p||p.type!=='select'||!['確認待ち','仕分け待ち','対象外'].every(function(n){return p.select.options.some(function(o){return o.name===n;});}))throw new Error('確認状態の準備が必要です。setupProductionNotionStatusを実行してください。');
+    var status=inboxSchema.properties['取り込み状態'];if(!status||status.type!=='select'||!['未処理','取り込み済み','対象外（Meet優先）'].every(function(n){return status.select.options.some(function(o){return o.name===n;});}))throw new Error('tl;dv受信の取り込み状態と選択肢を確認してください。');
+    if(c.prod&&c.DRY_RUN==='false'&&!c.CHATWORK_TOKEN)throw new Error('本番の通知にはCHATWORK_TOKENが必要です。');
+    return {c:c,drive:drive,ledger:ledger,notion:notion,minutes:minutes,tasks:tasks,inbox:drive.folder(drive.root.id,'inbox',false),raw:drive.within(c.raw),masters:NotesPlan_.masters(ledger.masters()),projects:notion.query(c.tasks).map(RefExportPlan_.project)};
+  }
+  function chunk(blocks,start){var out=[];for(var i=start;i<blocks.length&&out.length<100;i++){var next=out.concat([blocks[i]]);if(JSON.stringify(next).length>120000){if(!out.length)throw new Error('1ブロックが大きすぎます。省略せず停止します。');break;}out=next;}return out;}
+  function steps(row){return row&&row.step_done_json?JSON.parse(row.step_done_json):{};}
+  function notifyError(x,key,message){var id=ServiceConfig_.key(x.c,'alert:'+key),props=PropertiesService.getScriptProperties(),record=props.getProperty(id);if(record)return;var text='【議事録自動化・要確認】'+ServiceChatwork_.clean(key)+'\n'+message;
+    x.ledger.log('停止検知',key,text);if(x.c.DRY_RUN==='true'){ServiceChatwork_.send(x.c,text,x.ledger,key);return;}
+    x.ledger.append('change_log',{change_id:Utilities.getUuid(),at:new Date().toISOString(),meeting_key:key,kind:'停止検知',after_json:JSON.stringify({message:message}),actor:'GAS-A（'+x.c.ENV+'）',result:'要確認'});
+    props.setProperty(id,JSON.stringify({state:'pending',at:new Date().toISOString()}));try{var result=ServiceChatwork_.send(x.c,text,x.ledger,key);props.setProperty(id,JSON.stringify({state:'sent',result:result,at:new Date().toISOString()}));}catch(e){console.log('監視通知も送信できませんでした。GASの実行履歴を確認してください。');}
+  }
+  function resolveAlert(x,key){if(x.c.DRY_RUN==='true')return;var id=ServiceConfig_.key(x.c,'alert:'+key),props=PropertiesService.getScriptProperties();if(props.getProperty(id)){x.ledger.append('change_log',{change_id:Utilities.getUuid(),at:new Date().toISOString(),meeting_key:key,kind:'停止検知解除',actor:'GAS-A（'+x.c.ENV+'）',result:'回復'});props.deleteProperty(id);}}
+  function ingest(x,source,deadline){var c=x.c,drive=x.drive,ledger=x.ledger,m=source.manifest,key=m.meeting_key,row=ledger.rows('minutes').find(function(r){return r.meeting_key===key;}),s=steps(row);
+    if(ServiceConfig_.beforeStart(c,m,source.receivedAt))return {status:'対象開始前'};
+    if(row&&s.workflow!=='GEMINI_NOTES'){if(row.notion_page_id)return {status:'旧経路で作成済み・再作成しません'};throw new Error('旧経路の処理中記録があります。二重処理せず確認してください。');}
+    if(s.env&&s.env!==c.ENV)throw new Error('別環境の処理記録は利用しません。');
+    if(s.finished){if(source.pageId&&c.prod&&!s.sourceDone){x.notion.status(source.pageId,'取り込み済み',c.NOTION_DB_TLDV_INBOX);s.sourceDone=true;save();}return {status:'作成済み'};}
+    var rules=c.CLASSIFICATION_RULES_JSON?JSON.parse(c.CLASSIFICATION_RULES_JSON):undefined,j=NotesPlan_.plan(m,source.notes,source.transcript,x.masters,x.projects,rules);InboxPlan_.judgement(j);
+    if(s.jsonId)j=drive.readJSON(s.jsonId);
+    var metadata=Object.assign({},j,{summary:{decisions:[],next_actions:[]}}),plan=NotionFixturePlan_.plan(metadata,m,x.masters,x.minutes,x.tasks,x.projects.map(function(p){return p.id;})),blocks=Stage2Content_.blocks(Stage2Content_.markdown(j.minutes_markdown)),hash=TranscriptText_.hash(JSON.stringify(j));
+    if(s.hash&&s.hash!==hash)throw new Error('処理途中で元メモ・マスタが変わりました。本文を自動で上書きせず確認します。');
+    if(c.DRY_RUN==='true'){console.log('議事録作成予定：'+JSON.stringify({env:c.ENV,key:key,title:j.minutes_title,status:plan.placement.status,db:c.minutes,questions:j.open_questions}));ledger.log('GEMINI_NOTES作成予定',key,{judgement:j,notion:plan.payload});ServiceChatwork_.send(c,'【議事録作成予定】'+ServiceChatwork_.clean(j.minutes_title)+'／要確認：'+(j.open_questions.length?'あり':'なし'),ledger,key);return {dryRun:true,key:key};}
+    function save(){row.step_done_json=JSON.stringify(s);ledger.save(row);}
+    if(m.source==='meet'){ledger.rows('minutes').filter(function(r){return r.source==='tldv'&&r.status!=='対象外'&&r.notion_page_id&&MeetingRules_.sameMeeting(m,{title:r.title,start:r.event_start,attendees:JSON.parse(r.attendees_json||'[]')},15);}).forEach(function(r){x.notion.status(r.notion_page_id,'対象外',c.minutes);r.status='対象外';r.last_error='Meet優先により対象外（ページは保持）';ledger.save(r);});}
+    if(!row){var attendeeEmails=(m.attendees||[]).map(function(a){return String(a.email||'').toLowerCase();});plan.payload.properties['参加者']={people:Array.from(new Set(x.masters.people.filter(function(p){return p.notion_user_id&&[p.google_email].concat(NotesPlan_.list(p.alt_emails)).some(function(e){return attendeeEmails.includes(String(e||'').toLowerCase());});}).map(function(p){return p.notion_user_id;}))).map(function(id){return {object:'user',id:id};})};row={meeting_key:key,display_id:ledger.displayId(m.start),source:m.source,event_id:m.event_id||'',event_start:m.start,event_end:m.end||'',title:m.title,organizer_email:m.organizer_email||'',attendees_json:JSON.stringify(m.attendees||[]),scope_auto:j.scope,scope_final:j.scope,placement_auto:j.placement,placement_final:plan.placement.placement,domains_auto:JSON.stringify(j.domains),domains_final:JSON.stringify(plan.placement.domains),related_project_ids_auto:JSON.stringify(j.related_project_ids),related_project_ids_final:JSON.stringify(plan.placement.related_project_ids),minutes_title:j.minutes_title,confidence:j.confidence,reason:j.reason,sensitive:j.sensitive,status:plan.placement.status,notion_status:'未作成',last_error:j.open_questions.join(' '),created_at:new Date().toISOString(),raw_file_ids_json:JSON.stringify(m.files||{})};s={workflow:'GEMINI_NOTES',env:c.ENV,hash:hash,sourcePageId:source.pageId||'',rawFolderId:source.folder&&source.folder.id||'',input_quality:source.transcript?'transcript':'notes_only',nextBlock:0,notionProperties:plan.payload.properties};save();}
+    if(!row.meeting_folder_id){var destination;if(plan.placement.placement==='00_仕分け待ち')destination=drive.folder(c.prod?c.SHARED_DRIVE_ID:drive.root.id,'00_仕分け待ち',false).id;else{var mapping=x.masters.folders.find(function(f){return f.placement===plan.placement.placement;})||x.masters.clients.find(function(f){return '社外/'+f.client_name===plan.placement.placement;});if(!mapping||!mapping.drive_folder_id)throw new Error('格納先マスタにDriveフォルダIDがありません。');destination=drive.within(mapping.drive_folder_id).id;}
+      row.meeting_folder_id=drive.folder(destination,Utilities.formatDate(new Date(m.start),'Asia/Tokyo','yyyy-MM-dd_HHmm')+'_'+InboxPlan_.safeName(m.title),true,key).id;row.folder_id_final=destination;save();}
+    if(!s.sourceId){s.sourceId=drive.createFile(row.meeting_folder_id,'source_snapshot.json',JSON.stringify(source),'application/json','source_snapshot',key).id;save();}
+    if(!s.jsonId){var candidates=drive.children(x.inbox.id).filter(function(f){return f.name==='notes_'+key.replace(/:/g,'_')+'.json';});if(candidates.length>1)throw new Error('判定JSONが重複しています。');if(candidates.length&&JSON.stringify(drive.readJSON(candidates[0].id))!==JSON.stringify(j))throw new Error('既存の判定JSONと内容が違います。');s.jsonId=(candidates[0]||drive.createFile(x.inbox.id,'notes_'+key.replace(/:/g,'_')+'.json',JSON.stringify(j,null,2),'application/json','judgement',key)).id;save();}
+    if(!row.minutes_doc_id){var existing=drive.children(row.meeting_folder_id).filter(function(f){return f.mimeType==='application/vnd.google-apps.document'&&(f.appProperties||{}).kind==='minutes'&&(f.appProperties||{}).meeting_key===key;});if(existing.length>1)throw new Error('議事録Docが重複しています。');row.minutes_doc_id=(existing[0]||drive.createFile(row.meeting_folder_id,j.minutes_title,Stage2Content_.html(j.minutes_markdown),'application/vnd.google-apps.document','minutes',key)).id;save();}
+    if(!row.notion_page_id){if(s.notion==='pending')throw new Error('Notion作成結果が不明です。実ページを確認するまで再作成しません。');s.notion='pending';save();try{var firstBlocks=chunk(blocks,0),payload=Object.assign({},plan.payload,{properties:s.notionProperties||plan.payload.properties,children:firstBlocks}),page=x.notion.create(payload);if(!page.id)throw new Error('ページIDがありません。');row.notion_page_id=page.id;s.notion='created';s.nextBlock=firstBlocks.length;save();}catch(e){if(e.httpStatus>=400&&e.httpStatus<500&&e.httpStatus!==408){s.notion='rejected';save();}throw e;}}
+    x.notion.page(row.notion_page_id,c.minutes);if(s.appendPending)throw new Error('Notion本文追加の結果が不明です。再追記しません。');while(s.nextBlock<blocks.length){if(Date.now()>deadline)return {status:'次周期に本文の続き'};s.appendPending=true;save();var nextBlocks=chunk(blocks,s.nextBlock);x.notion.append(row.notion_page_id,nextBlocks);s.nextBlock+=nextBlocks.length;s.appendPending=false;save();}row.notion_status='作成済み';save();
+    if(source.folder&&!s.filesMoved){Object.keys(m.files||{}).forEach(function(kind){var f=drive.within(m.files[kind]);if(!f.parents.some(function(p){return p===source.folder.id||p===row.meeting_folder_id;}))throw new Error('会議の生データが別のフォルダにあります。');drive.move(f.id,row.meeting_folder_id,kind,key);});
+      if(m.transcript_text&&m.transcript_text.file_id){var txt=drive.within(m.transcript_text.file_id);if(!txt.parents.some(function(p){return p===source.folder.id||p===row.meeting_folder_id;}))throw new Error('TXTの所在が違います。');drive.move(txt.id,row.meeting_folder_id,'transcript_text',key);}
+      var manifests=drive.children(source.folder.id).filter(function(f){return f.name==='manifest.json';});if(manifests.length===1){s.manifestId=manifests[0].id;save();drive.move(manifests[0].id,row.meeting_folder_id,'manifest',key);}s.filesMoved=true;save();}
+    if(source.folder&&!s.rawDone&&drive.children(source.folder.id).length===0){var excluded=drive.folder(c.prod?c.SHARED_DRIVE_ID:drive.root.id,'99_対象外',false),empty=drive.folder(excluded.id,'_空',false);drive.move(source.folder.id,empty.id,'empty',key);s.rawDone=true;save();}
+    if(!s.chatwork||s.chatwork==='rejected'){s.chatwork='pending';save();try{var sent=ServiceChatwork_.send(c,ServiceChatwork_.body(row),ledger,key);row.chatwork_message_id=sent.message_id||'';s.chatwork=sent.planned?'planned':'sent';save();}catch(e){if(e.rejected){s.chatwork='rejected';save();}throw e;}}else if(s.chatwork==='pending')throw new Error('Chatwork送信結果が不明です。実ルームを確認してください。');
+    if(!s.jsonDone){drive.move(s.jsonId,drive.folder(x.inbox.id,'_done',false).id,'judgement',key);s.jsonDone=true;save();}
+    if(source.pageId&&c.prod&&!s.sourceDone){x.notion.status(source.pageId,'取り込み済み',c.NOTION_DB_TLDV_INBOX);s.sourceDone=true;save();}
+    if(!s.finished){ledger.append('change_log',{change_id:Utilities.getUuid(),at:new Date().toISOString(),meeting_key:key,kind:'議事録作成',target:row.notion_page_id,after_json:JSON.stringify({env:c.ENV,source:m.source,status:row.status}),actor:'GAS-A（'+c.ENV+'）',result:'完了'});s.finished=true;save();}resolveAlert(x,key);return {key:key,status:'作成済み',pageId:row.notion_page_id};
+  }
+  function run(){var started=Date.now(),deadline=started+240000,x,c,result=[],count=0,meetings=[],seen={};
+    try{x=context();c=x.c;}catch(preflightError){try{var config=ServiceConfig_.load(),scopedDrive=ServiceDrive_.open(config);scopedDrive.within(config.LEDGER_SPREADSHEET_ID);var book=Stage2Ledger_.open(SpreadsheetApp.openById(config.LEDGER_SPREADSHEET_ID),true);notifyError({c:config,ledger:book},'pipeline-preflight','GASの接続確認が失敗しました。Notion・権限・項目構成・実行履歴を確認してください。');}catch(ignore){console.log('接続監視の記録/通知も失敗しました。finance@のトリガー失敗メールを確認してください。');}throw preflightError;}
+    resolveAlert(x,'pipeline-preflight');
+    function process(source){if(Date.now()>deadline||count>=c.INGEST_BATCH)return;var key=source.manifest.meeting_key;if(seen[key])return;seen[key]=true;var prior=x.ledger.rows('minutes').find(function(r){return r.meeting_key===key;}),priorSteps=steps(prior);if(priorSteps.finished||prior&&priorSteps.workflow!=='GEMINI_NOTES'&&prior.notion_page_id)return;if(priorSteps.notion==='pending'||priorSteps.appendPending||priorSteps.chatwork==='pending'){notifyError(x,key,'書き込み結果が不明です。Notion/Chatworkの実データを確認するまで再送しません。');return;}try{if(priorSteps.sourceId)source=x.drive.readJSON(priorSteps.sourceId);result.push(ingest(x,source,deadline));count++;}catch(e){notifyError(x,key,'取り込みに失敗しました。接続・項目構成・本文変更・作成結果不明をGASの実行履歴で確認してください。');console.log('GEMINI_NOTES処理エラー：'+key+'／'+String(e.message).split(c.NOTION_TOKEN).join('[非表示]'));result.push({key:key,status:'要対応'});count++;}}
+    x.drive.children(x.raw.id).filter(function(f){return f.mimeType==='application/vnd.google-apps.folder';}).forEach(function(folder){if(Date.now()>deadline||count>=c.INGEST_BATCH)return;try{var files=x.drive.children(folder.id).filter(function(f){return f.name==='manifest.json';});if(files.length!==1)return;var m=x.drive.readJSON(files[0].id);if(m.status!=='ready'||m.source!=='meet'||c.prod&&Date.parse(m.start)<Date.parse(c.PRODUCTION_START_AT))return;meetings.push(m);var known=x.ledger.rows('minutes').find(function(r){return r.meeting_key===m.meeting_key;}),state=steps(known);if(state.finished)return;var src=state.sourceId?x.drive.readJSON(state.sourceId):NotesSources_.meet(m,folder,x.drive);resolveAlert(x,folder.name);process(src);}catch(e){notifyError(x,folder.name,'Meetのメモ・文字起こし・manifestを読み取れません。');}});
+    x.ledger.rows('minutes').filter(function(r){var s=steps(r);return s.workflow==='GEMINI_NOTES'&&s.env===c.ENV&&!s.finished&&s.sourceId;}).forEach(function(r){if(Date.now()>deadline||count>=c.INGEST_BATCH)return;var snapshot=x.drive.readJSON(steps(r).sourceId);if(snapshot.manifest.meeting_key!==r.meeting_key)throw new Error('保存した会議のキーが違います。');process(snapshot);});
+    x.ledger.rows('minutes').filter(function(r){return r.source==='meet'&&r.status!=='対象外';}).forEach(function(r){meetings.push({source:'meet',title:r.title,start:r.event_start,attendees:JSON.parse(r.attendees_json||'[]'),meeting_key:r.meeting_key});});
+    var filter={or:[{property:'取り込み状態',select:{equals:'未処理'}},{property:'取り込み状態',select:{is_empty:true}}]};if(c.prod)filter={and:[filter,{property:'日付',date:{on_or_after:c.PRODUCTION_START_AT.slice(0,10)}}]};
+    if(count<c.INGEST_BATCH&&Date.now()<deadline)x.notion.query(c.NOTION_DB_TLDV_INBOX,filter,5000).forEach(function(page){if(count>=c.INGEST_BATCH||Date.now()>deadline)return;try{if(x.ledger.rows('minutes').some(function(r){var s=steps(r);return s.workflow==='GEMINI_NOTES'&&s.env===c.ENV&&s.finished&&s.sourcePageId===page.id;}))return;var source=NotesSources_.tldv(page,x.notion,x.masters.people),m=source.manifest;if(String(m.title||'').includes('【記録なし】')){x.ledger.log('tl;dv記録なし対象外',m.meeting_key,'タイトルの除外指定に従い本文を転記しません。');return;}if(ServiceConfig_.beforeStart(c,m,source.receivedAt))return;var wait=Number(c.TLDV_WAIT_MIN||60);var readiness=m.end?Date.parse(m.end):Date.parse(source.receivedAt);if(!Number.isFinite(readiness)){notifyError(x,m.meeting_key,'tl;dvの終了時刻と受信日時を確認できません。');return;}if(!Number.isFinite(wait)||wait<0||wait>1440)throw new Error('TLDV_WAIT_MINが不正です。');if(Date.now()<readiness+wait*60000)return;resolveAlert(x,'tldv:'+page.id);
+      var duplicate=!m.time_unknown&&meetings.find(function(meet){return /[T ]\d{2}:\d{2}/.test(meet.start)&&MeetingRules_.sameMeeting(m,meet,15);});if(duplicate){if(c.DRY_RUN==='false'&&c.prod)x.notion.status(page.id,'対象外（Meet優先）',c.NOTION_DB_TLDV_INBOX);x.ledger.log('tl;dv対象外（Meet優先）',m.meeting_key,duplicate.meeting_key);return;}process(source);
+    }catch(e){console.log('tl;dv受信エラー：'+String(e.message).split(c.NOTION_TOKEN).join('[非表示]'));notifyError(x,'tldv:'+page.id,'tl;dv受信の日時・長さ・参加者・本文・Notion権限を確認してください。');}});
+    // PC/JSON到着の監視は実行しません。新経路の要対応だけを監視します。
+    x.ledger.rows('minutes').filter(function(r){var s=steps(r);return s.workflow==='GEMINI_NOTES'&&s.env===c.ENV&&!s.finished&&Date.now()-Date.parse(r.created_at)>2*3600000;}).forEach(function(r){notifyError(x,r.meeting_key,'GAS内の議事録処理が2時間以上完了していません。実行履歴とNotion/Chatworkの状態を確認してください。');});
+    TldvHealth_.check(x,deadline,function(key,message){notifyError(x,key,message);},function(key){resolveAlert(x,key);});
+    console.log('GEMINI_NOTES処理結果：'+JSON.stringify(result));return result;
+  }
+  return {run:run,context:context,ingest:ingest,steps:steps};
+})();
+function runNotesPipeline(){assertFinanceOperator_();return Ledger_.withLock(NotesPipeline_.run);}
+function setupProductionNotionStatus(){assertFinanceOperator_();return Ledger_.withLock(function(){var c=ServiceConfig_.load();if(!c.prod)throw new Error('本番の確認状態追加にはENV=prodが必要です。');return ServiceNotion_.open(c).setupStatus();});}
+function setupNotesNotionStatus(){assertFinanceOperator_();return Ledger_.withLock(function(){return ServiceNotion_.open(ServiceConfig_.load()).setupStatus();});}
+
+
+// notesPlan.js
+// 既存サービスのAIメモを整形するだけです。外部AIによる推論・新しい要約は行いません。
+var NotesPlan_=(function(){
+  var domains=['セールス・マーケ','EC','生産管理','経理・バックオフィス','Salesforce・AI','経営'];
+  function list(v){if(Array.isArray(v))return v;if(!v)return [];try{var a=JSON.parse(v);if(Array.isArray(a))return a;}catch(ignore){}return String(v).split(/[,、\n]/).map(function(s){return s.trim();}).filter(Boolean);}
+  function participantText(value,people){var raw=String(value||''),out=[],seen={};function add(email,name){email=String(email||'').toLowerCase();var key=email||name;if(!seen[key]){seen[key]=true;out.push({email:email,name:name||email});}}
+    (raw.match(/[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g)||[]).forEach(function(e){add(e,e);});
+    raw.split(/[,、;\n]/).map(function(s){return s.trim();}).filter(Boolean).forEach(function(name){if(name.includes('@'))return;var matched=(people||[]).filter(function(p){return p.name===name;});if(matched.length===1)add(matched[0].google_email,name);else add('',name);});return out;
+  }
+  function masters(input){var result=Object.assign({},input),internal=list(input.internal).map(function(v){return v.toLowerCase();});if(internal.some(function(v){return ['gmail.com','yahoo.co.jp','outlook.com','icloud.com'].includes(v);}))throw new Error('フリーメール全体を社内にせず、社員メールを完全一致で登録してください。');(input.people||[]).forEach(function(p){[p.google_email].concat(list(p.alt_emails)).forEach(function(e){e=String(e||'').trim().toLowerCase();if(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))internal.push(e);});});result.internal=Array.from(new Set(internal));return result;}
+  function section(text,name){var lines=String(text||'').split('\n'),found=false,out=[];lines.forEach(function(line){if(/^\s*#{1,6}\s/.test(line)){var heading=line.replace(/^\s*#+\s*/,'').trim();if(found)found=false;if(name.test(heading))found=true;return;}if(found&&line.trim())out.push(line.replace(/^\s*[-*•]\s*/,''));});return out;}
+  function plan(m,notes,transcript,input,projects,rules){
+    if(!m||!/^(meet|tldv):[A-Za-z0-9_-]+$/.test(m.meeting_key||'')||!Number.isFinite(Date.parse(m.start)))throw new Error('会議キー・日時を確認してください。');
+    notes=String(notes||'').trim();transcript=String(transcript||'').trim();if(!notes&&!transcript)throw new Error('AIメモも文字起こしもありません。リンクだけのページは処理できません。');if(notes.length+transcript.length>200000)throw new Error('本文が上限を超えました。省略せず停止します。');
+    var master=masters(input),rule=MeetingRules_.classify(m.attendees,master),questions=[],scope=rule.scope||'社外',matches=[];
+    if(m.time_unknown)questions.push('会議の時刻が不明です。日付だけを転記しています。');if(m.source==='tldv'&&!m.end)questions.push('会議の終了時刻/長さを確認してください。');
+    if(rule.incomplete)questions.push('参加者メールが不足しています。社内/社外と確認者を確認してください。');
+    var keywordRules=rules||domains.map(function(d){return {domain:d,terms:[d]};});
+    keywordRules.forEach(function(r){if(!domains.includes(r.domain)||!Array.isArray(r.terms)||r.terms.some(function(t){return typeof t!=='string'||t.length<2;}))throw new Error('CLASSIFICATION_RULES_JSONの部署・キーワードが不正です。');if(r.terms.some(function(term){var needle=term.normalize('NFKC').toLowerCase(),hay=String(m.title||'').normalize('NFKC').toLowerCase();if(/^[a-z0-9]+$/i.test(needle))return new RegExp('(^|[^a-z0-9])'+needle+'([^a-z0-9]|$)','i').test(hay);return hay.includes(needle);}))matches.push(r.domain);});
+    if(!matches.length){var emails=(m.attendees||[]).map(function(p){return String(p.email||'').toLowerCase();});(master.people||[]).filter(function(p){return [p.google_email].concat(list(p.alt_emails)).some(function(e){return emails.includes(String(e||'').toLowerCase());});}).forEach(function(p){matches=matches.concat(list(p.domains).filter(function(d){return domains.includes(d);}));});}
+    matches=Array.from(new Set(matches));if(matches.length!==1){matches=[];questions.push('事業部領域を一意に決められません。');}
+    if(scope==='社外'&&!rule.client)questions.push(rule.ambiguous_client?'顧客が複数候補です。':'顧客がマスタで特定できません。');
+    var placement=scope==='社内'?(matches.length?'社内/'+matches[0]:'社内/事業部全体'):'社外/'+(rule.client||'顧客未特定（要確認）');
+    var related=(projects||[]).filter(function(p){return p.title&&p.title.length>=4&&String(m.title||'').includes(p.title);}).map(function(p){return p.id;});
+    if(!related.length)questions.push('関連プロジェクトはタイトル完全一致の根拠がなく未設定です。');
+    var notesOnly=!transcript;if(notesOnly)questions.push('文字起こしなし・メモから作成');if(!notes)questions.push('AIメモがありません。新たな要約は行わず文字起こしを転記します。');
+    var sensitive=/人事|評価|健康|給与|採用|経営|機密/.test(String(m.title||'')+'\n'+notes),confidence=m.time_unknown||m.source==='tldv'&&!m.end||rule.incomplete||!matches.length||scope==='社外'&&!rule.client||notesOnly||!notes?'低':'高';
+    var date=new Date(Date.parse(m.start)+9*3600000).toISOString().slice(0,10),title=date+' '+String(m.title||'会議'),decisions=section(notes,/^決定事項$/),actions=section(notes,/^(推奨される次のステップ|次のステップ|ネクストアクション|Next steps|Action items)$/i);
+    var markdown='## 基本情報\n- 日時：'+m.start+(m.time_unknown?'（日付のみ・時刻要確認）':'')+'\n- 記録元：'+(m.source==='meet'?'Meet / Gemini':'tl;dv')+'\n- 参加者：'+(m.attendees||[]).map(function(p){return p.name||p.email||'要確認';}).join('、')+'\n- 作成方式：既存AIメモの転記・ルール判定（追加のAI要約なし）\n'+(notesOnly?'- 文字起こしなし・メモから作成\n':'')+'\n## AIメモ（提供元の内容）\n'+(notes||'AIメモはありません。')+'\n\n## 決定事項\n'+(decisions.length?decisions.map(function(s){return '- '+s;}).join('\n'):'- 提供元メモで決定事項を明示できません。要確認。')+'\n\n## ネクストアクション\n'+(actions.length?actions.map(function(s){return '- '+s;}).join('\n'):'- 提供元メモを確認してください。担当・期日は補完していません。')+'\n\n## 要確認\n'+(questions.length?questions.map(function(q){return '- '+q;}).join('\n'):'- 内容の確認をお願いします。')+(transcript?'\n\n## 文字起こし（提供元の原文）\n'+transcript:'');
+    return {meeting_key:m.meeting_key,source:m.source,scope:scope,placement:placement,domains:matches,related_project_ids:related,minutes_title:title,minutes_doc_id:null,minutes_markdown:markdown,confidence:confidence,reason:(confidence==='高'?'登録マスタ・会議名の明示キーワードで判定しました。':'一意に決められない項目があり、仕分け待ちで確認が必要です。')+(notesOnly?'文字起こしなし・メモから作成。':''),sensitive:sensitive,summary:{decisions:decisions,next_actions:actions.map(function(s){return {who:'要確認',what:s,due:null};})},task_proposals:[],open_questions:questions};
+  }
+  return {plan:plan,masters:masters,participantText:participantText,list:list,section:section};
+})();
+
+
+// notesSetup.js
+function setupNotesWorkspace(){assertFinanceOperator_();return Ledger_.withLock(function(){
+ var c=ServiceConfig_.load(),drive=ServiceDrive_.open(c),book=SpreadsheetApp.openById(c.LEDGER_SPREADSHEET_ID),plan=Ledger_.plan(book);drive.within(c.LEDGER_SPREADSHEET_ID);
+ var base=c.prod?c.SHARED_DRIVE_ID:drive.root.id,folders=[];
+ ['社内','社外','00_仕分け待ち','99_対象外'].forEach(function(name){var matches=drive.children(base).filter(function(f){return f.name===name;});if(matches.length!==1||matches[0].mimeType!=='application/vnd.google-apps.folder')throw new Error('既存の格納用フォルダを確認してください：'+name);folders.push(matches[0]);});
+ var internal=folders.find(function(f){return f.name==='社内';}),departments=['事業部全体','セールス・マーケ','EC','生産管理','経理・バックオフィス','Salesforce・AI','経営'],mapping=departments.map(function(name){var f=drive.folder(internal.id,name,false);return {placement:'社内/'+name,drive_folder_id:f.id,notion_domain:name==='事業部全体'?'':name};});
+ console.log('台帳初期化予定：'+JSON.stringify(plan.filter(function(p){return p.action!=='変更なし';})));console.log('既存格納先マスタ登録予定：'+JSON.stringify(mapping));
+ ['inbox'].forEach(function(name){var matches=drive.children(drive.root.id).filter(function(f){return f.name===name;});if(matches.length>1||matches.length&&matches[0].mimeType!=='application/vnd.google-apps.folder')throw new Error('inboxが重複または型不正です。');});
+ if(c.DRY_RUN==='true'){console.log('不足inbox/_done・99_対象外/_空、台帳シート・既存部署フォルダのマスタだけを準備します。既存ファイルを移動・改名・削除しません。');return {dryRun:true};}
+ var inbox=drive.folder(drive.root.id,'inbox',true);drive.folder(inbox.id,'_done',true);drive.folder(folders.find(function(f){return f.name==='99_対象外';}).id,'_空',true);Stage2Ledger_.initialize(book);var ledger=Stage2Ledger_.open(book,true);
+ mapping.forEach(function(r){var known=ledger.rows('masters_folders').filter(function(f){return f.placement===r.placement;});if(known.length>1||known.length&&known[0].drive_folder_id!==r.drive_folder_id)throw new Error('既存の部署フォルダマスタと違います。上書きしません。');if(!known.length)ledger.append('masters_folders',r);});
+ if(!ledger.rows('masters_internal').some(function(r){return r.email_or_domain==='premiere-mode.co.jp';}))ledger.append('masters_internal',{email_or_domain:'premiere-mode.co.jp',note:'Workspaceの会社ドメイン'});
+ if(!ledger.rows('masters_people').some(function(r){return r.google_email==='finance@premiere-mode.co.jp';}))ledger.append('masters_people',{name:'議事録管理者',google_email:'finance@premiere-mode.co.jp',is_admin:true,is_reviewer:true});
+ console.log('準備しました。社員の個人GmailとNotionユーザー、顧客ドメインは人が本環境のマスタへ入力してください。テストマスタはコピーしていません。');return {env:c.ENV};
+});}
+function checkNotesEnvironment(){assertFinanceOperator_();return Ledger_.withLock(function(){var c=ServiceConfig_.load(),x=NotesPipeline_.context();var result={env:c.ENV,mode:c.GENERATOR_MODE,minutes:c.minutes,tasks:c.tasks,raw:c.raw,ledger:c.LEDGER_SPREADSHEET_ID,chatwork:c.room||'予定ログのみ',people:x.masters.people.length,projects:x.projects.length,dryRun:c.DRY_RUN};console.log(JSON.stringify(result));return result;});}
+
+function sendNotesConnectionNotice(){assertFinanceOperator_();return Ledger_.withLock(function(){var c=ServiceConfig_.load(),drive=ServiceDrive_.open(c);drive.within(c.LEDGER_SPREADSHEET_ID);var ledger=Stage2Ledger_.open(SpreadsheetApp.openById(c.LEDGER_SPREADSHEET_ID),true);return ServiceChatwork_.send(c,'【議事録自動化】接続確認です。新しい議事録と停止時の通知をこのルームへ送ります。',ledger,'接続確認');});}
+
+
+// notesSources.js
+var NotesSources_=(function(){
+  function documentText(id,type,tabId){var d=GoogleApi_.docsGet(id,{includeTabsContent:true});if(d.documentId!==id)throw new Error('DocのIDが一致しません。');return TranscriptText_.extract(d,{file_id:id,type:type,tab_id:tabId});}
+  function formatNotes(text){return String(text||'').split('\n').map(function(line){return /^(まとめ|要約|詳細|決定事項|推奨される次のステップ|次のステップ|ネクストアクション|Summary|Details|Next steps|Action items)$/i.test(line.trim())?'## '+line.trim():line;}).join('\n');}
+  function meet(m,folder,drive){var notes='',transcript='',files=m.files||{};if(files.gemini){var f=drive.within(files.gemini);if(!f.parents.includes(folder.id))throw new Error('Geminiメモの親が違います。');notes=documentText(f.id,'gemini_notes');}
+    var source=m.transcript_source;if(source&&source.type==='document_tab'&&(source.file_id!==files.gemini))throw new Error('文字起こしタブがGeminiメモと一致しません。');if(source&&source.type==='document_tab')transcript=documentText(source.file_id,'document_tab',source.tab_id);else{var id=files.transcript||files.tldv_transcript;if(id){var f=drive.within(id);if(!f.parents.includes(folder.id))throw new Error('文字起こしの親が違います。');transcript=f.mimeType==='text/plain'?DriveApp.getFileById(id).getBlob().getDataAsString('UTF-8'):documentText(id,'file');}}
+    return {manifest:m,notes:formatNotes(notes),transcript:transcript,folder:folder};
+  }
+  function tldv(page,notion,people){var p=page.properties||{},value=function(name){return notion.propertyText?notion.propertyText(page,name):ServiceNotion_.text(p[name]);},name=Object.keys(p).find(function(k){return p[k].type==='title';}),title=ServiceNotion_.text(p[name]),start=value('日付');if(!Number.isFinite(Date.parse(start)))throw new Error('tl;dvの日付がありません。作成日時では代用しません。');
+    var attendees=NotesPlan_.participantText(value('参加者'),people),url=value('会議URL'),match=/^https:\/\/(?:www\.)?tldv\.io\/app\/meetings\/([A-Za-z0-9_-]+)(?:[/?#]|$)/.exec(url),key='tldv:'+(match?match[1]:'notion-'+page.id),notes=value('AIメモ'),transcript=value('トランスクリプト');
+    var body=notion.body(page.id);if(body){var lines=body.split('\n'),inTranscript=false,other=[],tr=[];lines.forEach(function(line){if(/^##\s*/.test(line)){inTranscript=/^##\s*(文字起こし|トランスクリプト|transcript)\s*$/i.test(line);if(inTranscript)return;}if(inTranscript)tr.push(line);else other.push(line);});if(!notes)notes=other.join('\n').trim();if(!transcript)transcript=tr.join('\n').trim();}
+    if(!notes&&!transcript)throw new Error('tl;dv受信にAIノートも文字起こし本文もありません。');var durationText=value('長さ').trim(),clock=/^(\d+):(\d{2}):(\d{2})$/.exec(durationText),duration=clock?Number(clock[1])*60+Number(clock[2])+Number(clock[3])/60:Number(durationText.replace(/分$/,''));
+    return {manifest:{meeting_key:key,source:'tldv',title:title||'tl;dv会議',start:start,time_unknown:!/[T ]\d{2}:\d{2}/.test(start),end:/[T ]\d{2}:\d{2}/.test(start)&&Number.isFinite(duration)&&duration>0?new Date(Date.parse(start)+duration*60000).toISOString():'',attendees:attendees,organizer_email:'',files:{},status:'ready'},notes:formatNotes(notes),transcript:transcript,pageId:page.id,receivedAt:page.created_time||'',durationKnown:Number.isFinite(duration)&&duration>0};
+  }
+  return {meet:meet,tldv:tldv};
+})();
+
+
 // notionClient.js
 var Notion_ = (function () {
   // 公式SDKのデータソースAPIに合わせ、読み取りだけを実装します。
@@ -904,7 +1048,7 @@ var NotionFixturePlan_ = (function () {
     var comparison = compareSchema('minutes', minutes.properties);
     if (comparison.differences.some(function (d) { return d.kind === '項目名・型'; })) throw new Error('議事録DBの項目名・型がSPECと異なります。checkTestEnvironmentで確認してください。');
     var relation = minutes.properties['関連するプロジェクト'].relation || {};
-    if (normalize(relation.data_source_id) !== normalize(tasks.sourceId)) throw new Error('関連するプロジェクトがテスト用タスクDBを参照していません。');
+    if (normalize(relation.data_source_id) !== normalize(tasks.sourceId) && !(relation.database_id && tasks.databaseId && normalize(relation.database_id) === normalize(tasks.databaseId))) throw new Error('関連するプロジェクトがテスト用タスクDBを参照していません。');
     if (!Number.isFinite(Date.parse(manifest.start))) throw new Error('会議の開始日時が不正です。');
     if (judgement.minutes_title.length > 2000) throw new Error('議事録名が長すぎます。');
     var projects = projectIds.map(function (id) { return { id: id }; });
@@ -1401,6 +1545,22 @@ function addTldvInboxStatusOptions() {
   if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_(); return Ledger_.withLock(function () { return NotionTestEnvironment_.open(true, 'inbox-options').addInboxOptions(); }); }
 
 
+// peopleImport.js
+// 一時シートpeople_importにCSVをインポート/貼付してから、管理者が一度実行します。
+var PeopleImport_=(function(){
+ function plan(values,existing){var headers=['name','google_email','alt_emails','notion_user_id','domains','is_reviewer','is_admin'];if(!values.length||JSON.stringify(values[0])!==JSON.stringify(headers))throw new Error('people_importの見出しを指定の7列に揃えてください。');
+  var rows=values.slice(1).filter(function(r){return r.some(function(v){return String(v).trim();});}).map(function(r){var person={};headers.forEach(function(h,i){person[h]=String(r[i]===undefined?'':r[i]).trim();});person.google_email=person.google_email.toLowerCase();person.alt_emails=JSON.stringify(NotesPlan_.list(person.alt_emails).map(function(s){return s.toLowerCase();}));person.domains=JSON.stringify(NotesPlan_.list(person.domains));if(!person.name||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(person.google_email)||NotesPlan_.list(person.alt_emails).some(function(e){return !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);}))throw new Error('社員名・メールの形式が不正です。');if(person.notion_user_id&&!/^[0-9a-f]{32}$/i.test(person.notion_user_id.replace(/-/g,'')))throw new Error('NotionユーザーIDを確認してください。メールではなくユーザーIDです。');if(NotesPlan_.list(person.domains).some(function(d){return !['セールス・マーケ','EC','生産管理','経理・バックオフィス','Salesforce・AI','経営'].includes(d);}))throw new Error('事業部領域の選択肢が不正です。');['is_admin','is_reviewer'].forEach(function(h){if(!['','true','false','TRUE','FALSE'].includes(person[h]))throw new Error('権限はtrue/falseで指定してください。');person[h]=person[h].toLowerCase()==='true';});return person;});
+  if(new Set(rows.map(function(p){return p.google_email;})).size!==rows.length)throw new Error('インポート内の社員メールが重複しています。');
+  var all=existing.map(function(p){return Object.assign({},p);}),changes=[];rows.forEach(function(p){var matches=all.filter(function(e){return String(e.google_email).toLowerCase()===p.google_email;});if(matches.length>1)throw new Error('既存社員メールが重複しています。');if(matches.length){var old=matches[0];if(old.name!==p.name||old.notion_user_id&&p.notion_user_id&&old.notion_user_id!==p.notion_user_id)throw new Error('既存社員の氏名/Notion IDが違います。自動で置換しません。');if((String(old.is_admin).toLowerCase()==='true')!==p.is_admin||(String(old.is_reviewer).toLowerCase()==='true')!==p.is_reviewer)throw new Error('既存の権限はインポートで変更しません。台帳で確認してください。');p.notion_user_id=p.notion_user_id||old.notion_user_id;p.alt_emails=JSON.stringify(Array.from(new Set(NotesPlan_.list(old.alt_emails).concat(NotesPlan_.list(p.alt_emails)))));if(!NotesPlan_.list(p.domains).length)p.domains=old.domains;changes.push({action:'更新',row:old._row,person:p});all[all.indexOf(old)]=p;}else{changes.push({action:'追加',person:p});all.push(p);}});
+  var identities={};all.forEach(function(p){[String(p.google_email).toLowerCase()].concat(NotesPlan_.list(p.alt_emails).map(function(e){return e.toLowerCase();})).forEach(function(e){if(!e)return;if(identities[e]&&identities[e]!==p.google_email)throw new Error('別社員とメール/別名が重複しています。');identities[e]=p.google_email;});});return changes;
+ }
+ return {plan:plan};
+})();
+function importPeopleFromSheet(){assertFinanceOperator_();return Ledger_.withLock(function(){var c=ServiceConfig_.load(),drive=ServiceDrive_.open(c);drive.within(c.LEDGER_SPREADSHEET_ID);var book=SpreadsheetApp.openById(c.LEDGER_SPREADSHEET_ID),sheet=book.getSheetByName('people_import');if(!sheet)throw new Error('people_importシートにCSVの7列を貼り付けてください。');var ledger=Stage2Ledger_.open(book,true),changes=PeopleImport_.plan(sheet.getDataRange().getValues(),ledger.rows('masters_people'));
+ console.log('社員マスタ：追加'+changes.filter(function(c){return c.action==='追加';}).length+'件／更新'+changes.filter(function(c){return c.action==='更新';}).length+'件の予定です。');if(c.DRY_RUN==='true')return {dryRun:true,count:changes.length};
+ var columns=Ledger_.headers.masters_people.split(',');changes.forEach(function(change){var p=change.person;if(change.action==='追加'){ledger.append('masters_people',p);return;}var existing=ledger.rows('masters_people').find(function(r){return r._row===change.row;}),merged=Object.assign({},existing,p);book.getSheetByName('masters_people').getRange(change.row,1,1,columns.length).setValues([columns.map(function(k){var v=merged[k]===undefined?'':merged[k];return /^[=+@]/.test(String(v))?"'"+v:v;})]);});console.log('社員マスタを反映しました。インポート用シートは削除していません。');return {count:changes.length};});}
+
+
 // refExportPlan.js
 // 参照用に必要な項目だけを取り出します。権限・トークン・自由記述本文は出力しません。
 var RefExportPlan_=(function(){
@@ -1797,6 +1957,78 @@ function setupReviewNotionStatus() {
     return {dryRun:c.c.DRY_RUN==='true',pages:rows.length,added:statePlan.added};
   });
 }
+
+
+// serviceChatwork.js
+var ServiceChatwork_=(function(){
+  function clean(s){return String(s||'').replace(/\[/g,'［').replace(/\]/g,'］').replace(/https?:\/\/\S+/g,'（URL省略）');}
+  function body(row){var time=/[T ]\d{2}:\d{2}/.test(row.event_start)?new Date(Date.parse(row.event_start)+9*3600000).toISOString().slice(0,16).replace('T',' '):row.event_start+'（時刻要確認）';return '【議事録の確認】'+clean(row.minutes_title)+'\n会議日時：'+time+'（日本時間）\nNotion：https://www.notion.so/'+String(row.notion_page_id).replace(/[^a-f0-9]/gi,'')+'\n要確認：'+(row.status==='仕分け待ち'||row.last_error?'あり':'内容をご確認ください');}
+  function send(c,text,ledger,target){if(c.prod&&c.DRY_RUN==='false'&&!c.CHATWORK_TOKEN)throw new Error('本番投稿にはCHATWORK_TOKENが必要です。');if(c.DRY_RUN==='true'||!c.prod){console.log('Chatwork通知予定：'+text);ledger.log('Chatwork通知予定',target,text);return {planned:true};}if(c.room!=='451196858')throw new Error('送信先が本番確認ルームではありません。');var response;try{response=UrlFetchApp.fetch('https://api.chatwork.com/v2/rooms/451196858/messages',{method:'post',headers:{'X-ChatWorkToken':c.CHATWORK_TOKEN},payload:{body:text,self_unread:'0'},muteHttpExceptions:true});}catch(e){throw new Error('Chatwork送信結果が不明です。自動再送しません。');}var code=response.getResponseCode();if(code<200||code>=300){var error=new Error('Chatwork HTTP '+code);error.rejected=code>=400&&code<500&&code!==408;throw error;}var data=JSON.parse(response.getContentText());if(!data.message_id)throw new Error('Chatwork応答にメッセージIDがありません。');return data;}
+  return {body:body,send:send,clean:clean};
+})();
+
+
+// serviceEnvironment.js
+// 本番用とテスト用を値の別名で混在させません。新経路の設定・書込境界です。
+var ServiceConfig_=(function(){
+  var pinned={drive:'0ALo4SlMVSpXdUk9PVA',system:'1UbflVH7ITQBN6INYyAQyn7fy77CWl4wH',raw:'1jNifZBBUN0QNMWdA_hI2J5YY2PbqtxoB',ledger:'137IuSH4nGulMcsB5-IKqvIXkw8SiQrFBjFNSAeXNt0c',minutes:'4cf02dee-7a11-4319-ace1-e866d6a1a914',tasks:'e321f1cb-3365-4a2c-9844-47f34734a9d7',inbox:'400ca178-7419-80dd-a3e0-ef9e2267a64c',testRoot:'1pKWcGDuRCBf3VG0AfKBaKghE0nD3kYwW',testMinutes:'d9cc47f9-543e-4bcb-8ec8-27bebc0feac5',testTasks:'c908936a-6999-4119-9e9c-df364f5f5d1b'};
+  function isNotes(){return (PropertiesService.getScriptProperties().getProperty('GENERATOR_MODE')||'GEMINI_NOTES')==='GEMINI_NOTES';}
+  function load(values){var p=values||PropertiesService.getScriptProperties().getProperties(),c=Object.assign({},p);if(!['test','prod'].includes(c.ENV)||!['true','false'].includes(c.DRY_RUN))throw new Error('ENV=test/prodとDRY_RUN=true/falseを明示してください。');
+    c.GENERATOR_MODE=c.GENERATOR_MODE||'GEMINI_NOTES';if(c.GENERATOR_MODE!=='GEMINI_NOTES')throw new Error('この経路はGEMINI_NOTES専用です。');
+    c.prod=c.ENV==='prod';c.root=c.prod?c.FOLDER_SYSTEM_ID:c.FOLDER_SYSTEM_TEST_ID;c.raw=c.prod?c.FOLDER_INBOX_RAW_ID:c.FOLDER_INBOX_RAW_TEST_ID;
+    c.minutes=c.prod?c.NOTION_DB_MINUTES:c.NOTION_DB_MINUTES_TEST;c.tasks=c.prod?c.NOTION_DB_TASKS:c.NOTION_DB_TASKS_TEST;c.room=c.prod?'451196858':null;
+    c.INGEST_BATCH=Number(c.INGEST_BATCH||5);if(!Number.isInteger(c.INGEST_BATCH)||c.INGEST_BATCH<1||c.INGEST_BATCH>10)throw new Error('INGEST_BATCHは1〜10です。');
+    if(!c.NOTION_TOKEN||!c.LEDGER_SPREADSHEET_ID||!c.root||!c.raw)throw new Error('Notionトークン・台帳・受信/ルートIDが必要です。');
+    if(c.NOTION_DB_TLDV_INBOX!==pinned.inbox)throw new Error('確認済みtl;dv受信DBを設定してください。');
+    if(c.prod){[['SHARED_DRIVE_ID','drive'],['FOLDER_SYSTEM_ID','system'],['FOLDER_INBOX_RAW_ID','raw'],['LEDGER_SPREADSHEET_ID','ledger'],['NOTION_DB_MINUTES','minutes'],['NOTION_DB_TASKS','tasks']].forEach(function(pair){if(c[pair[0]]!==pinned[pair[1]])throw new Error(pair[0]+'が確認済み本番IDと一致しません。');});
+      if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/.test(c.PRODUCTION_START_AT||'')||!Number.isFinite(Date.parse(c.PRODUCTION_START_AT)))throw new Error('PRODUCTION_START_ATに本番で取り込み始める会議日時を明示してください。');
+      if(c.CHATWORK_ROOM_ID&&c.CHATWORK_ROOM_ID!==c.room)throw new Error('本番Chatworkルームは451196858です。');
+    }else{if(c.minutes!==pinned.testMinutes||c.tasks!==pinned.testTasks||c.LEDGER_SPREADSHEET_ID===pinned.ledger)throw new Error('テスト経路に本番DB・本番台帳を設定できません。');}
+    return c;
+  }
+  function beforeStart(c,m,receivedAt){if(!c.prod)return false;if(m.time_unknown)return String(m.start).slice(0,10)<String(c.PRODUCTION_START_AT).slice(0,10)||!Number.isFinite(Date.parse(receivedAt))||Date.parse(receivedAt)<Date.parse(c.PRODUCTION_START_AT);return Date.parse(m.start)<Date.parse(c.PRODUCTION_START_AT);}
+  function key(c,key){return 'NOTES_PIPELINE:'+c.ENV+':'+c.minutes+':'+TranscriptText_.hash(key);}
+  return {load:load,isNotes:isNotes,beforeStart:beforeStart,pinned:pinned,key:key};
+})();
+var ServiceDrive_=(function(){
+  var folderMime='application/vnd.google-apps.folder';
+  function open(c){
+    if(!c.prod)return Stage2Drive_.open(c);
+    function get(id){return GoogleApi_.get(id,{supportsAllDrives:true,fields:'id,name,mimeType,parents,driveId,trashed,appProperties'});}
+    var root=get(c.root);if(root.name!=='_system'||root.mimeType!==folderMime||root.trashed||root.driveId!==c.SHARED_DRIVE_ID||root.parents.length!==1||root.parents[0]!==c.SHARED_DRIVE_ID)throw new Error('本番_systemの所属が違います。');
+    function within(id){if(id===c.SHARED_DRIVE_ID)return {id:id,mimeType:folderMime};var file=get(id),cursor=file,seen={};for(var i=0;i<30;i++){if(cursor.id===ServiceConfig_.pinned.testRoot||cursor.name==='_test'||cursor.trashed||cursor.mimeType==='application/vnd.google-apps.shortcut'||cursor.driveId!==c.SHARED_DRIVE_ID)break;if(cursor.id===c.SHARED_DRIVE_ID||cursor.parents&&cursor.parents.length===1&&cursor.parents[0]===c.SHARED_DRIVE_ID)return file;if(!cursor.parents||cursor.parents.length!==1||seen[cursor.id])break;seen[cursor.id]=true;cursor=get(cursor.parents[0]);}throw new Error('本番共有ドライブ内の許可された対象ではありません。テスト領域へは書き込みません。');}
+    function children(parent){within(parent);var out=[],token;do{var args={q:"'"+parent.replace(/'/g,"\\'")+"' in parents and trashed=false",corpora:'drive',driveId:c.SHARED_DRIVE_ID,supportsAllDrives:true,includeItemsFromAllDrives:true,pageSize:100,fields:'nextPageToken,files(id,name,mimeType,parents,appProperties,createdTime,modifiedTime)'};if(token)args.pageToken=token;var r=GoogleApi_.list(args);out=out.concat(r.files||[]);token=r.nextPageToken;}while(token);return out;}
+    function write(){if(c.DRY_RUN!=='false')throw new Error('DRY_RUN中は書き込みできません。');}
+    function createFile(parent,name,text,mime,kind,key){write();within(parent);return GoogleApi_.create({name:name,mimeType:mime,parents:[parent],appProperties:{minutes_environment:'prod',kind:kind,meeting_key:key||''}},text===null?null:Utilities.newBlob(text,mime==='application/vnd.google-apps.document'?'text/html':mime,name),{supportsAllDrives:true,fields:'id,name,mimeType,parents,appProperties'});}
+    function folder(parent,name,create,key){var matches=children(parent).filter(function(f){return key?(f.appProperties||{}).meeting_key===key:f.name===name;});if(matches.length>1||matches.length&&matches[0].mimeType!==folderMime)throw new Error('同名・同一会議のフォルダを一意に特定できません。');if(matches.length)return matches[0];if(!create)throw new Error('必要なフォルダがありません：'+name);return createFile(parent,name,null,folderMime,'meeting',key);}
+    function move(id,dest,kind,key){write();var file=within(id);within(dest);if((file.appProperties||{}).meeting_key&&(file.appProperties||{}).meeting_key!==key)throw new Error('別の会議ファイルです。');var args={supportsAllDrives:true,fields:'id,parents'};if(!file.parents.includes(dest)){args.addParents=dest;args.removeParents=file.parents.join(',');}return GoogleApi_.update({appProperties:Object.assign({},file.appProperties||{},{minutes_environment:'prod',meeting_key:key,kind:kind})},id,null,args);}
+    within(c.LEDGER_SPREADSHEET_ID);var raw=within(c.raw);if(raw.name!=='00_受信'||raw.parents.length!==1||raw.parents[0]!==root.id)throw new Error('本番受信フォルダの所属が違います。');
+    return {root:root,within:within,children:children,folder:folder,createFile:createFile,move:move,readJSON:function(id){within(id);return JSON.parse(DriveApp.getFileById(id).getBlob().getDataAsString('UTF-8'));}};
+  }
+  return {open:open};
+})();
+
+
+// serviceNotion.js
+var ServiceNotion_=(function(){
+  function open(c){var verified={},last=0;
+    function request(method,path,body){var wait=350-(Date.now()-last);if(wait>0)Utilities.sleep(wait);last=Date.now();var args={method:method,headers:{Authorization:'Bearer '+c.NOTION_TOKEN,'Notion-Version':'2025-09-03'},muteHttpExceptions:true};if(body){args.contentType='application/json';args.payload=JSON.stringify(body);}var response;try{response=UrlFetchApp.fetch('https://api.notion.com/v1/'+path,args);}catch(e){throw new Error('Notion通信結果が不明です。作成・追記を自動再送しません。');}var code=response.getResponseCode(),data=JSON.parse(response.getContentText());if(code<200||code>=300){var error=new Error('Notion HTTP '+code+' / '+String(data.code||''));error.httpStatus=code;throw error;}return data;}
+    function schema(id){if(![c.minutes,c.tasks,c.NOTION_DB_TLDV_INBOX].includes(id))throw new Error('設定外のDBです。');if(verified[id])return verified[id];var db=request('get','databases/'+id);if(!db.id||db.id.replace(/-/g,'')!==id.replace(/-/g,'')||db.archived||db.in_trash||!db.data_sources||db.data_sources.length!==1)throw new Error('DBのID・状態・データソースを確認してください。');var ds=request('get','data_sources/'+db.data_sources[0].id);if(!ds.parent||ds.parent.database_id.replace(/-/g,'')!==id.replace(/-/g,'')||ds.archived||ds.in_trash)throw new Error('データソースの所属が違います。');return verified[id]={databaseId:db.id,sourceId:ds.id,properties:ds.properties};}
+    function belongs(page,id){var s=schema(id);return page&&!page.archived&&!page.in_trash&&page.parent&&(page.parent.data_source_id||'').replace(/-/g,'')===s.sourceId.replace(/-/g,'');}
+    function query(id,filter,limit){var s=schema(id),out=[],cursor,seen={};do{var body={page_size:100};if(filter)body.filter=filter;if(cursor)body.start_cursor=cursor;var r=request('post','data_sources/'+s.sourceId+'/query',body);if(!Array.isArray(r.results))throw new Error('一覧応答が不正です。');r.results.forEach(function(p){if(!belongs(p,id))throw new Error('別のDBのページが混在しています。');out.push(p);});cursor=r.has_more?r.next_cursor:null;if(cursor&&seen[cursor])throw new Error('一覧のページ送りが循環しています。');if(cursor)seen[cursor]=true;if(out.length>(limit||5000))throw new Error('一覧が上限を超えました。');}while(cursor);return out;}
+    function body(id){var count=0,started=Date.now();function walk(blockId,depth){if(Date.now()-started>45000)throw new Error('本文取得が時間上限を超えました。省略せず次回確認します。');if(depth>8)throw new Error('本文の階層が深すぎます。');var text=[],cursor,seen={};do{if(Date.now()-started>45000)throw new Error('本文取得が時間上限を超えました。');var r=request('get','blocks/'+blockId+'/children?page_size=100'+(cursor?'&start_cursor='+encodeURIComponent(cursor):''));(r.results||[]).forEach(function(b){if(++count>1500)throw new Error('本文が上限を超えました。省略せず停止します。');var value=b[b.type]||{},line=(value.rich_text||[]).map(function(t){return t.plain_text||t.text&&t.text.content||'';}).join('');if(/^heading_/.test(b.type))line='\n## '+line;if(line)text.push(line);if(b.has_children)text.push(walk(b.id,depth+1));});cursor=r.has_more?r.next_cursor:null;if(cursor&&seen[cursor])throw new Error('本文のページ送りが循環しています。');if(cursor)seen[cursor]=true;}while(cursor);return text.join('\n');}return walk(id,0);}
+    function propertyText(page,name){var p=(page.properties||{})[name];if(!p)return '';if(p.type!=='rich_text'||!p.has_more&&(p.rich_text||[]).length<25)return text(p);var out=[],cursor,seen={};do{var r=request('get','pages/'+page.id+'/properties/'+encodeURIComponent(p.id)+'?page_size=100'+(cursor?'&start_cursor='+encodeURIComponent(cursor):''));(r.results||[]).forEach(function(item){var rich=item.rich_text;out.push(rich&&(rich.plain_text||rich.text&&rich.text.content)||'');});cursor=r.has_more?r.next_cursor:null;if(cursor&&seen[cursor])throw new Error('本文プロパティのページ送りが循環しています。');if(cursor)seen[cursor]=true;}while(cursor);return out.join('');}
+    function page(id,database){var p=request('get','pages/'+id);if(!belongs(p,database))throw new Error('ページの書込先DBが違います。');return p;}
+    function write(){if(c.DRY_RUN!=='false')throw new Error('DRY_RUN中のNotion書き込みは禁止です。');}
+    function create(payload){write();var s=schema(c.minutes);if(payload.parent.type!=='data_source_id'||payload.parent.data_source_id!==s.sourceId||payload.archived||payload.in_trash)throw new Error('議事録DB以外には作成できません。');return request('post','pages',payload);}
+    function append(id,blocks){write();page(id,c.minutes);return request('patch','blocks/'+id+'/children',{children:blocks});}
+    function status(id,name,database){write();if(![c.minutes,c.NOTION_DB_TLDV_INBOX].includes(database))throw new Error('状態更新先が不正です。');var s=schema(database),field=database===c.minutes?'確認状態':'取り込み状態',p=s.properties[field];if(!p||p.type!=='select'||!p.select.options.some(function(o){return o.name===name;}))throw new Error(field+'の選択肢が不足しています。');page(id,database);var data={properties:{}};data.properties[field]={select:{name:name}};return request('patch','pages/'+id,data);}
+    function setupStatus(){var s=schema(c.minutes),p=s.properties['確認状態'];if(p&&p.type!=='select')throw new Error('確認状態はselect型が必要です。既存項目を変更しません。');var existing=p?p.select.options:[],names=['確認待ち','仕分け待ち','確定','保留','対象外'],missing=names.filter(function(n){return !existing.some(function(o){return o.name===n;});});console.log('確認状態の追加予定：'+JSON.stringify(missing));if(c.DRY_RUN==='true'||!missing.length)return missing;write();var opts=existing.map(function(o){return {id:o.id,name:o.name,color:o.color};}).concat(missing.map(function(n){return {name:n};}));return request('patch','data_sources/'+s.sourceId,{properties:{'確認状態':{type:'select',select:{options:opts}}}});}
+    return {schema:schema,query:query,body:body,propertyText:propertyText,page:page,create:create,append:append,status:status,setupStatus:setupStatus};
+  }
+  function text(p){if(!p)return '';if(['title','rich_text'].includes(p.type))return(p[p.type]||[]).map(function(v){return v.plain_text||v.text&&v.text.content||'';}).join('');if(p.type==='date')return p.date&&p.date.start||'';if(p.type==='url')return p.url||'';if(p.type==='select')return p.select&&p.select.name||'';if(p.type==='number')return String(p.number||'');if(p.type==='people')return(p.people||[]).map(function(u){return u.person&&u.person.email||u.name||'';}).join(',');return '';}
+  return {open:open,text:text};
+})();
 
 
 // setup.js
@@ -2537,6 +2769,18 @@ var TestDbSchema_ = (function () {
     });
   }
   return { id: id, scalarProperties: scalarProperties, relations: relations, relationProperty: relationProperty, assertCompatible: assertCompatible };
+})();
+
+
+// tldvHealth.js
+// 無料プランの正確な残回数をNotionだけから推定しません。登録値と独立した予定一覧で監視します。
+var TldvHealth_=(function(){
+ function check(x,deadline,notify,resolve){resolve=resolve||function(){};var settings=x.ledger.rows('settings'),c=x.c;
+  settings.filter(function(r){return String(r.key).startsWith('tldv_quota:');}).forEach(function(r){var q=JSON.parse(r.value);if(!Number.isInteger(q.remaining)||q.remaining<0||!Number.isFinite(Date.parse(q.checked_at)))throw new Error('tl;dv上限登録のremaining/checked_atを確認してください。');var owner=r.key.slice('tldv_quota:'.length);if(q.remaining>0)resolve('tl;dv上限:'+owner+':exhausted');if(q.remaining>Number(c.TLDV_REMAINING_ALERT||5))resolve('tl;dv上限:'+owner+':low');if(q.remaining<=Number(c.TLDV_REMAINING_ALERT||5))notify('tl;dv上限:'+owner+(q.remaining===0?':exhausted':':low'),q.remaining===0?'登録されたtl;dv連携残回数が0です。管理画面で上限・更新日を確認してください。':'登録されたtl;dv連携残回数が'+q.remaining+'です。これは管理者が確認した時点の値です。自動取得値ではありません。');});
+  var calendars=NotesPlan_.list(c.TLDV_CALENDAR_IDS),timeout=Number(c.TLDV_RECEIVE_TIMEOUT_MIN||120);if(!Number.isInteger(timeout)||timeout<15||timeout>1440)throw new Error('TLDV_RECEIVE_TIMEOUT_MINは15〜1440です。');if(!calendars.length){if(c.prod&&!settings.some(function(r){return String(r.key).startsWith('tldv_quota:');}))notify('tl;dv監視未設定','無料連携の残回数登録も業務カレンダー監視も未設定です。上限で止まってもNotion受信だけでは検知できません。監視設定を行ってください。');return;}
+  var now=Date.now(),rows=x.ledger.rows('minutes');calendars.forEach(function(id){if(Date.now()>deadline)return;try{var token,seen={};do{var args={timeMin:new Date(now-72*3600000).toISOString(),timeMax:new Date(now).toISOString(),singleEvents:true,showDeleted:false,maxResults:250};if(token)args.pageToken=token;var page=Calendar.Events.list(id,args);(page.items||[]).forEach(function(e){var start=e.start&&e.start.dateTime,end=e.end&&e.end.dateTime;if(e.status==='cancelled'||e.visibility==='private'||String(e.summary||'').includes('【記録なし】')||!start||!end||!Number.isFinite(Date.parse(start))||!Number.isFinite(Date.parse(end))||Date.parse(end)>now-timeout*60000||c.prod&&Date.parse(start)<Date.parse(c.PRODUCTION_START_AT))return;var meet=e.hangoutLink||((e.conferenceData||{}).entryPoints||[]).find(function(p){return p.entryPointType==='video'&&/^https:\/\/meet\.google\.com\//.test(p.uri||'');});if(!meet)return;var candidate={title:e.summary||'',start:start,attendees:(e.attendees||[]).map(function(a){return {email:a.email};})};var expectedKey='tl;dv受信未着:'+id+':'+e.id;if(rows.some(function(r){return r.notion_page_id&&r.status!=='対象外'&&MeetingRules_.sameMeeting(candidate,{title:r.title,start:r.event_start,attendees:JSON.parse(r.attendees_json||'[]')},15);})){resolve(expectedKey);return;}notify(expectedKey,'予定「'+ServiceChatwork_.clean(e.summary)+'」終了後も議事録が届いていません。無料連携上限・自動参加・会議の参加許可・Notion接続を確認してください。上限到達と断定はしていません。');});token=page.nextPageToken;if(token&&seen[token])throw new Error('予定一覧が循環しています。');if(token)seen[token]=true;}while(token&&Date.now()<deadline);}catch(e){notify('tl;dv監視カレンダー:'+id,'監視カレンダーを読み取れません。finance@への共有権限・Calendarサービス・認証を確認してください。');}});
+ }
+ return {check:check};
 })();
 
 

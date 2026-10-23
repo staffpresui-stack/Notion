@@ -1,5 +1,5 @@
 var Config_ = (function () {
-  var defaults = { ENV: 'test', DRY_RUN: 'true', GENERATOR_MODE: 'LOCAL_CODEX',
+  var defaults = { ENV: 'test', DRY_RUN: 'true', GENERATOR_MODE: 'GEMINI_NOTES',
     NOTION_VERSION: '2025-09-03', TASK_DB_MODE: 'single', NOTION_MTG_URL_SOURCE: 'none', NOTION_REQUESTER_TYPE: 'people' };
   // テスト対象を本番IDで代用しません。不明な値は安全側で拒否します。
   function inspect(values, profile) {
@@ -8,9 +8,10 @@ var Config_ = (function () {
     if (c.ENV !== 'test') required.push('SHARED_DRIVE_ID');
     if (!['test', 'prod'].includes(c.ENV)) errors.push('ENV は test または prod を指定してください。');
     if (!['true', 'false'].includes(c.DRY_RUN)) errors.push('DRY_RUN は true または false を指定してください。');
-    if (c.ENV !== 'test') errors.push('この開発環境はENV=test専用です。');
+    if(c.ENV==='prod'&&c.GENERATOR_MODE==='GEMINI_NOTES'&&typeof ServiceConfig_!=='undefined'){try{ServiceConfig_.load(c);}catch(e){errors.push(e.message);}return {ok:!errors.length&&!missing.length,missing:missing,errors:errors};}
+    if (c.ENV !== 'test') errors.push('本番はGEMINI_NOTES専用です。');
     if (!['people', 'rich_text', 'email'].includes(c.NOTION_REQUESTER_TYPE)) errors.push('NOTION_REQUESTER_TYPE が不正です。');
-    if (!['CHATGPT', 'LOCAL_CODEX'].includes(c.GENERATOR_MODE)) errors.push('GENERATOR_MODE が不正です。');
+    if (!['CHATGPT', 'LOCAL_CODEX','GEMINI_NOTES'].includes(c.GENERATOR_MODE)) errors.push('GENERATOR_MODE が不正です。');
     if (!['single', 'dual'].includes(c.TASK_DB_MODE)) errors.push('TASK_DB_MODE が不正です。');
     if (!['none', 'folder', 'meet'].includes(c.NOTION_MTG_URL_SOURCE)) errors.push('NOTION_MTG_URL_SOURCE が不正です。');
     required = required.concat(['FOLDER_SYSTEM_TEST_ID', 'NOTION_DB_MINUTES_TEST', 'NOTION_DB_TASKS_TEST']);

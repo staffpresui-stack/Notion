@@ -29,6 +29,6 @@
   ],
   "webapp": {
     "executeAs": "USER_ACCESSING",
-    "access": "MYSELF"
+    "access": "DOMAIN"
   }
 }

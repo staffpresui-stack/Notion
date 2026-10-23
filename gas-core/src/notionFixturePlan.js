@@ -47,7 +47,7 @@ var NotionFixturePlan_ = (function () {
     var comparison = compareSchema('minutes', minutes.properties);
     if (comparison.differences.some(function (d) { return d.kind === '項目名・型'; })) throw new Error('議事録DBの項目名・型がSPECと異なります。checkTestEnvironmentで確認してください。');
     var relation = minutes.properties['関連するプロジェクト'].relation || {};
-    if (normalize(relation.data_source_id) !== normalize(tasks.sourceId)) throw new Error('関連するプロジェクトがテスト用タスクDBを参照していません。');
+    if (normalize(relation.data_source_id) !== normalize(tasks.sourceId) && !(relation.database_id && tasks.databaseId && normalize(relation.database_id) === normalize(tasks.databaseId))) throw new Error('関連するプロジェクトがテスト用タスクDBを参照していません。');
     if (!Number.isFinite(Date.parse(manifest.start))) throw new Error('会議の開始日時が不正です。');
     if (judgement.minutes_title.length > 2000) throw new Error('議事録名が長すぎます。');
     var projects = projectIds.map(function (id) { return { id: id }; });

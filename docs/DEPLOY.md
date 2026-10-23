@@ -1,3 +1,5 @@
+**最新の本番手順は[GEMINI_NOTES_PRODUCTION.md](GEMINI_NOTES_PRODUCTION.md)。PC不要・社員Workspace登録・個人Gmail/tl;dv・Notion本番・Chatwork451196858に対応します。GAS-AはCalendar readonlyの追加認証、BはDOMAIN公開が必要です。以下は旧方式の履歴です。**
+
 無人テスト運転の最新手順は[AUTOMATION_TEST.md](AUTOMATION_TEST.md)。A/BのコードとMac runnerを更新し、一度だけ設定・登録します。
 
 Drive/Docs一時エラーの共通再試行は[GOOGLE_RETRY_UPDATE.md](GOOGLE_RETRY_UPDATE.md)を参照。今回スコープ変更・追加プロパティはありません。

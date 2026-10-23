@@ -1,3 +1,7 @@
+# PC不要・社員・本番経路（最新）
+
+ユーザーの方針変更でGEMINI_NOTESを既定へ。既存Google/tl;dv AIメモを転記しルール判定する新経路を追加、prod/testのIDと処理記録・通知を分離。Notion確認状態追加、共有ドライブ/台帳準備、ゲスト/Gmail/会社メールの社員インポート、Workspace本人B登録、Chatwork本番通知、tl;dv無料上限登録/共有業務予定未着監視を実装。GAS-AへCalendar readonly、BはDOMAIN公開。元のtest専用経路はガードを維持。LOCAL_CODEX監視は新経路では不使用。tl;dv無料上限を回避する全文取得や残数APIは確認できず、確認できていないものを実装済みとは扱わない。実GAS/DB/Chatwork/社員権限の設定・実機試験は未実施。最新手順はGEMINI_NOTES_PRODUCTION.md。ローカル201件とbuild/check/smokeが成功。
+
 # テスト環境の無人運転（最新）
 
 ユーザーの2026-10-22実機合格を受け、AUTO会議検出、メモ限定フォールバック、Aの統合15分トリガー、Mac成功/失敗レコード、生成遅延・連続失敗・取り込み要対応の監視を追加。記録除外、冪等性、同一ロック、時間制限、source/本文/台帳の出所明示、低確信度、安全な再検査、通知抑制/回復をモックで検証。ローカル183件とbuild/check/smokeが成功。実機の設定・GAS/Mac更新・無人通しは未実施。手順と本番残作業はAUTOMATION_TEST.md。本番は変更しません。

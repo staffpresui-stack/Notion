@@ -14,6 +14,9 @@
 
 ## 最新のユーザー指定（元の設計より優先）
 
+**2026-10-23の最新方針（以下の過去履歴より優先）**：PC常時運転は不可、LOCAL_CODEXは実行経路から外しCodexは開発専用。GEMINI_NOTESを既定とし既存Gemini/tl;dv AIメモをGASで転記・規則仕分け、外部AI APIは不使用。本番ENV=prodの実装・準備関数は今回ユーザーが許可。実GAS/Notion/Chatwork設定・書込は引き続きユーザー。本番DB/Drive/台帳とtestを分離、テスト記録は持ち込まない。社員の会社Workspace本人はB登録可能、個人Gmail/記録ライセンスなしはtl;dv無料枠内のNotion受信経路。Notionの本番確認は社員ゲストがNotion上で行う。Chatworkは451196858・メンションなし。tl;dv残数の正確な自動取得は未確認なので、登録された残数と共有業務カレンダー未着を区別して監視。マスタ取り込みはimportPeopleFromSheet。最新手順は `docs/GEMINI_NOTES_PRODUCTION.md`。旧テスト専用ルールは旧経路に残し、まとめて解除しない。
+
+
 - GAS-A・GAS-Bの所有・作成・認証、共有ドライブ「MTG記録」の作成・管理、ChatGPTのGoogle Driveコネクタは `finance@premiere-mode.co.jp` を使用します。ChatGPT本体はpremiere・Plusです。contact@はWorkspaceユーザーではありません。Notionのオーナー・内部インテグレーションはcontact@のままです。
 - finance@の本体GASと共有ドライブのフォルダ・本番／テスト台帳はユーザーが作成済みです。最新の手順は `docs/SHARED_DRIVE_TEST.md`。ENV=testで_test内だけを準備・検証します。_systemは読み取りだけで、目印を付けません。本番台帳・_test外への書き込みは禁止です。
 - GAS実行と実サービスへの書き込みはユーザーが行います。Codexはローカル実装・テスト・コミット・許可されたworkへのpushを行います。mainへのマージや強制pushは行いません。

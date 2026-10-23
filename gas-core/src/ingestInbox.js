@@ -194,7 +194,7 @@ var InboxIngest_ = (function () {
 })();
 
 function ingestInbox() {
-  if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_(); return Ledger_.withLock(InboxIngest_.run); }
+  if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_();if(typeof ServiceConfig_!=='undefined'&&ServiceConfig_.isNotes())return Ledger_.withLock(NotesPipeline_.run);return Ledger_.withLock(InboxIngest_.run); }
 
 function retryInboxErrors() {
   if (typeof assertFinanceOperator_ === 'function') assertFinanceOperator_();

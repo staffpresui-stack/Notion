@@ -4,7 +4,17 @@
 
 ---
 
-## テスト環境の無人運転（最新）
+## 2026-10-23 本番・PC不要方式（以下の履歴より優先）
+
+GENERATOR_MODE=GEMINI_NOTESを既定にし、Google WorkspaceのGeminiメモ・文字起こし、tl;dvのAIノート・文字起こしをGASだけで取得・整形。新たなAI推論、外部AI API、Codex/PCは使わない。社内/社外・部署・案件は社員のメール完全一致（Gmail/会社アカウントの別名含む）、顧客ドメイン、会議名キーワードで規則判定。曖昧な項目は仕分け待ち・要確認、メモのみも出所明示。判定JSON/DocをDriveに保存し、本番MTG議事録DBへ作成。社員はNotionゲストとして確認状態を操作。旧GAS確認画面はtest専用のままで本番確認に使わない。
+
+ENV=prodは確認済みの本番共有ドライブ/_system/受信/台帳/MTG/案件DBの固定IDと明示的なPRODUCTION_START_ATが必要。DRY_RUNで送信予定を確認。本番の確認状態追加はsetupProductionNotionStatus、不足シート/構成/部署マスタ準備はsetupNotesWorkspace。テスト台帳や重複記録を本番へ流用しない。旧testコードのガードを一律解除せず、新しいServiceConfig/Drive/Notionで書込先を固定する。
+
+Bは会社Workspace本人が1回登録し自分主催のMeetだけAUTO検出。記録なし・非公開は除外、ファイルがない会議は静かに対象外。個人Gmailや記録非対応の社員はtl;dvの無料Notion連携を利用。無料上限を超える本文取得経路は未確認。残回数は管理画面で確認した値をsettingsへ登録、独立した共有業務カレンダー未着監視を併用。受信未着を上限と断定しない。Calendar readonlyをGAS-Aへ追加。
+
+本番Chatwork通知/停止通知はroom451196858へメンションなし、トークンはCHATWORK_TOKEN。test/DRY_RUNは予定ログ。GEMINI_NOTESではLOCAL_CODEXのJSON未着/runner監視を実行しない。本番切替・社員一回設定・無料上限の限界・実機残事項はGEMINI_NOTES_PRODUCTION.md。
+
+## テスト環境の無人運転（旧方式）
 
 26bd4d4のユーザー実機通し合格後、ENV=testのまま無人運転へ進めます。BはMOVER_MODE=TEST_EVENT（既定）/AUTO。AUTOは本人主催・Meet付き・終了待機後・終了が直近72時間内の予定を対象、非公開と【記録なし】を除外し、記録が無い予定は静かに無視。録画は任意です。文字起こしがなくメモだけならMOVER_MEMO_WAIT_MIN（既定120分）後にgemini_notesとして利用。Doc/Notion/判定/台帳へ「文字起こしなし・メモから作成」を明記、確信度低で確認へ回します。曖昧なメモは要確認で止め、元データは書き換えません。
 
