@@ -39,6 +39,8 @@
 
 - 4c27762のGAS-A反映後、Driveの初回metaで断続的なInternal Errorがユーザー実機で報告されました。Drive/Docs共通再試行（初回＋4回、0.5→1→2→4秒）を追加。権限/不在等は再試行しません。作成は事前IDまたは目印照合で二重化を防ぎ、ID非対応の結果不明は保留。手順は `docs/GOOGLE_RETRY_UPDATE.md`。候補MacはmacOS 15.7、Drive別アカウント利用中・finance@未追加、Codex未導入、実行PCは未決です。
 
+- 2026-10-22に26bd4d4のLOCAL_CODEX通しがユーザー実機合格。Macはlaunchd15分、ログ~/pmode-minutes/logs/。今回の依頼で、ENV=testのままA/BをDRY_RUN=falseで維持する無人運転の準備・実装が許可されています（実設定はユーザー）。BはMOVER_MODE=AUTOを追加、本人Meet・過去72h、非公開/【記録なし】除外。AはsetupAutomationTriggerでTXT→ingest→監視を統合。文字起こしなしは待機後メモを使い出所明示・確信度低。監視は台帳とChatwork予定ログだけ。手順は `docs/AUTOMATION_TEST.md`。本番切替は今回禁止。
+
 ## 1. 最初に読む順番
 
 1. このファイル（全体・ルール・段階）

@@ -1,6 +1,7 @@
 var MoverPlan_=(function(){
   var kinds=['recording','transcript','gemini'];
-  function event(event,email,now,wait){
+  function event(event,email,now,wait,mode){
+    if(mode==='AUTO'&&event&&(event.visibility==='private'||String(event.summary||'').includes('【記録なし】')))return null;
     if(!event || event.status==='cancelled' || !event.organizer || event.organizer.self!==true || String(event.organizer.email||'').toLowerCase()!==email)return null;
     var start=event.start&&event.start.dateTime,end=event.end&&event.end.dateTime;
     if(!start||!end||!Number.isFinite(Date.parse(start))||!Number.isFinite(Date.parse(end))||Date.parse(end)<=Date.parse(start)||Date.parse(end)>now-wait*60000)return null;

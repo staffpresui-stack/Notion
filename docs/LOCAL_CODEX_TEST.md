@@ -1,3 +1,5 @@
+通し試験は2026-10-22にユーザー実機合格。以降の無人運転は[AUTOMATION_TEST.md](AUTOMATION_TEST.md)を参照。Macの既存launchd設定とログ~/pmode-minutes/logs/は維持します。
+
 最新のDrive一時エラー対策は[GOOGLE_RETRY_UPDATE.md](GOOGLE_RETRY_UPDATE.md)を先に反映してください。
 
 # PC上のCodexによる生成（テスト限定）

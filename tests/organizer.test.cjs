@@ -77,3 +77,13 @@ test('会議別のマイドライブサブフォルダからも添付IDで移動
 });
 
 test('会議名に文字起こしを含んでもGoogle生成のGeminiメモ末尾を優先して識別する',()=>{const h=harness();assert.equal(h.ctx.MoverPlan_.kind({mimeType:'application/vnd.google-apps.document',name:'文字起こしテスト - 2026-10-21 JST - Gemini によるメモ'}),'gemini')});
+test('AUTOは指定ID不要で本人Meetを拾い、非公開・記録なし・他人・添付なしを静かに除外',()=>{
+ const h=harness('true');h.props.MOVER_MODE='AUTO';delete h.props.MOVER_TEST_EVENT_ID;
+ const base=clone(h.event),events=[base,{...base,id:'private',visibility:'private'},{...base,id:'optout',summary:'【記録なし】相談'},{...base,id:'other',organizer:{self:false,email:'other@example.com'}},{...base,id:'empty',attachments:[]}];h.ctx.Calendar.Events.list=()=>({items:events});
+ const r=h.ctx.moverRun();assert.equal(r.length,1);assert.equal(r[0].status,'移動予定');assert.equal(h.writes.length,0);
+});
+test('AUTOは文字起こしなしでも待機後メモを使い、recordingを必須にしない',()=>{
+ const h=harness('true');h.props.MOVER_MODE='AUTO';h.event.end.dateTime=new Date(Date.now()-3*3600000).toISOString();h.event.start.dateTime=new Date(Date.now()-4*3600000).toISOString();h.event.attachments=[{fileId:'gemini'}];h.ctx.Calendar.Events.list=()=>({items:[clone(h.event)]});
+ const r=h.ctx.moverRun();assert.equal(r[0].status,'移動予定');assert.equal(r[0].transcript_source.type,'gemini_notes');assert.ok(r[0].missing.includes('transcript'));
+});
+test('AUTOでも登録が無ければ実移動しない。異常モードを拒否',()=>{const h=harness();h.props.MOVER_MODE='AUTO';assert.throws(()=>h.ctx.moverRun(),/登録/);h.props.MOVER_MODE='ALL';assert.throws(()=>h.ctx.Organizer_.config(),/MOVER_MODE/);});

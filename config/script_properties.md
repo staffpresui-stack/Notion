@@ -63,3 +63,16 @@ GAS-Bの具体値・作成手順は docs/ORGANIZER_TEST.md。今回はfinance@�
 ## PCのCodex生成
 
 追加の秘密プロパティは不要です。手順は `docs/LOCAL_CODEX_TEST.md`。exportTranscriptTextsと任意のsetupTranscriptExportTriggerをGAS-Aで実行します。FOLDER_INBOX_RAW_TEST_IDは既存値を維持。GAS-AにDocs v1サービスを追加しますがOAuthスコープ追加はありません。
+
+## テストの無人運転（最新）
+
+手順は `docs/AUTOMATION_TEST.md`。GAS実行・設定はユーザーが行います。初期確認後はA/BともENV=test・DRY_RUN=falseを維持し、会議ごとの手動実行を不要にします。
+
+| 対象 | キー | 既定/値 |
+|---|---|---|
+| B | MOVER_MODE | TEST_EVENT（互換）／AUTO（今回設定）。AUTOではMOVER_TEST_EVENT_ID不要 |
+| A/B | MOVER_MEMO_WAIT_MIN | 120。20〜2880分。文字起こしがなくGeminiメモがある場合の待機 |
+| A | GENERATOR_TIMEOUT_MIN | 120。15〜1440分。TXT出力後にJSON/取り込みが完了しない閾値 |
+| A | LOCAL_FAILURE_ALERT_COUNT | 3。1〜20回。直近4時間のMac連続失敗 |
+
+AUTOMATION_ALERT:*は監視の通知重複防止・回復状態を自動保存。手動作成・リセットしません。setupAutomationTriggerは旧TXT単独トリガーだけ解除して統合トリガーへ移行します。

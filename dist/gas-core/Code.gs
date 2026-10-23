@@ -1,3 +1,48 @@
+// automation.js
+// ENV=testの統合定期処理。公開準備関数以外はfinance@のトリガーだけで実行します。
+var Automation_=(function(){
+  function limits(c){var n=Number(c.GENERATOR_TIMEOUT_MIN||120),f=Number(c.LOCAL_FAILURE_ALERT_COUNT||3);if(!Number.isInteger(n)||n<15||n>1440||!Number.isInteger(f)||f<1||f>20)throw new Error('監視設定はGENERATOR_TIMEOUT_MIN=15〜1440、LOCAL_FAILURE_ALERT_COUNT=1〜20です。');return {timeout:n*60000,failures:f};}
+  function monitor(errors){
+    var c=Stage2Drive_.config(),limit=limits(c),drive=Stage2Drive_.open(c);drive.within(c.LEDGER_SPREADSHEET_ID);
+    var ledger=Stage2Ledger_.open(SpreadsheetApp.openById(c.LEDGER_SPREADSHEET_ID),true),raw=drive.folder(drive.root.id,'00_受信',false),inbox=drive.folder(drive.root.id,'inbox',false),now=Date.now(),alerts=[];
+    var rows=ledger.rows('minutes'),pending=drive.children(inbox.id);
+    drive.children(raw.id).filter(function(f){return f.mimeType==='application/vnd.google-apps.folder';}).forEach(function(folder){
+      try{var manifests=drive.children(folder.id).filter(function(f){return f.name==='manifest.json';});if(manifests.length!==1)return;
+      var m=drive.readJSON(manifests[0].id);if(!m.transcript_text)return;
+      if(rows.some(function(r){return r.meeting_key===m.meeting_key&&r.notion_page_id&&String(r.notion_status||'').indexOf('作成済み')===0;}))return;
+      var age=now-Date.parse(m.transcript_text.exported_at),name='local_'+folder.name+'.json',json=pending.find(function(f){return f.name===name;}),ready=json&&LocalInboxReady_.check(drive,json,pending);
+      if(Number.isFinite(age)&&age>=limit.timeout){var reason=ready?'JSONは届きましたが取り込みが完了していません。':'TXT出力後に有効なJSONが届いていません。Mac・Codex認証・同期を確認してください。';alerts.push({key:m.meeting_key,kind:'生成・取り込み遅延',message:reason});}
+      }catch(e){alerts.push({key:folder.name,kind:'受信データ要確認',message:'manifest・完了印・Driveの読み取りを確認してください。'});}
+    });
+    rows.forEach(function(r){try{var steps=r.step_done_json?JSON.parse(r.step_done_json):{};if(steps.error||r.notion_status==='Notion保留'||!steps.finished&&(steps.notion==='pending'||steps.appendPending||steps.chatwork==='pending'))alerts.push({key:r.meeting_key,kind:'取り込み要対応',message:'台帳が要対応・保留です。実行履歴と接続先を確認してください。結果不明の作成は再送しません。'});}catch(e){alerts.push({key:r.meeting_key,kind:'台帳要確認',message:'処理記録の形式を確認してください。既存データは修正していません。'});}});
+    var runtimes=drive.children(drive.root.id).filter(function(f){return f.name==='_local_codex'&&f.mimeType==='application/vnd.google-apps.folder';});
+    if(runtimes.length>1)throw new Error('ローカル監視フォルダが重複しています。');
+    if(runtimes.length){var statuses=[];drive.children(runtimes[0].id).filter(function(f){return /^status_.*\.json$/.test(f.name);}).filter(function(f){return !f.createdTime||now-Date.parse(f.createdTime)<4*3600000;}).forEach(function(f){try{var s=drive.readJSON(f.id);if(s.env==='test'&&typeof s.ok==='boolean'&&Number.isFinite(Date.parse(s.at))&&now-Date.parse(s.at)>=0&&now-Date.parse(s.at)<4*3600000)statuses.push(s);}catch(ignore){/* 同期途中は次回確認します。 */}});
+      statuses.sort(function(a,b){return Date.parse(b.at)-Date.parse(a.at);});var failures=0;for(var i=0;i<statuses.length&&!statuses[i].ok;i++)failures++;
+      if(failures>=limit.failures)alerts.push({key:'local_codex',kind:'ローカル連続失敗',message:'直近4時間で'+failures+'回連続失敗しました。Macのログ・Codexログイン・Drive同期を確認してください。'});
+    }
+    (errors||[]).forEach(function(e){alerts.push({key:e.folder||e.stage||'pipeline',kind:'自動処理要確認',message:e.error||'GASの実行履歴を確認してください。'});});
+    var props=PropertiesService.getScriptProperties(),active={};
+    alerts.forEach(function(a){var key='AUTOMATION_ALERT:'+TranscriptText_.hash(a.kind+':'+a.key);active[key]=true;var old=props.getProperty(key);old=old?JSON.parse(old):{};if(old.active)return;
+      var body='【議事録自動化・要確認】'+a.kind+'／'+a.key+'\n'+a.message;console.log(body);ledger.log('Chatwork通知予定（自動化監視・テスト）',a.key,body);
+      if(c.DRY_RUN==='false'){ledger.append('change_log',{change_id:Utilities.getUuid(),at:new Date().toISOString(),meeting_key:a.key,kind:'停止検知',target:a.kind,after_json:JSON.stringify({message:a.message}),actor:'GAS-A（テスト監視）',result:'要確認・Chatwork予定ログ'});props.setProperty(key,JSON.stringify({active:true,at:new Date().toISOString(),target:a.key}));}
+    });
+    if(c.DRY_RUN==='false'){var all=props.getProperties();Object.keys(all).filter(function(k){return k.startsWith('AUTOMATION_ALERT:')&&!active[k];}).forEach(function(k){var old=JSON.parse(all[k]);if(old.active){ledger.append('change_log',{change_id:Utilities.getUuid(),at:new Date().toISOString(),meeting_key:old.target,kind:'停止検知解除',actor:'GAS-A（テスト監視）',result:'回復'});props.setProperty(k,JSON.stringify({active:false,target:old.target}));}});}
+    return alerts;
+  }
+  function tick(){var started=Date.now(),errors=[],exported,ingested;
+    try{exported=TranscriptText_.run(true);errors=exported.results.filter(function(r){return r.status==='要確認';});}catch(e){errors.push({stage:'TXT出力',error:'TXT出力に失敗しました。GASの実行履歴とDriveを確認してください。'});console.log('TXT出力段階で停止しました。');}
+    try{ingested=InboxIngest_.run(null,started+240000,true);}catch(e){errors.push({stage:'取り込み',error:'取り込みに失敗しました。GASの実行履歴と接続設定を確認してください。'});console.log('取り込み段階で停止しました。');}
+    var alerts=monitor(errors);return {exported:exported,ingested:ingested,alerts:alerts};
+  }
+  return {tick:tick,monitor:monitor,limits:limits};
+})();
+function automationTick_(){if(String(Session.getEffectiveUser().getEmail()||'').toLowerCase()!=='finance@premiere-mode.co.jp')throw new Error('統合トリガーはfinance@専用です。');Stage2Drive_.config();return Ledger_.withLock(Automation_.tick);}
+function setupAutomationTrigger(){assertFinanceOperator_();return Ledger_.withLock(function(){var c=Stage2Drive_.config();Automation_.limits(c);Stage2Drive_.open(c);var own=ScriptApp.getProjectTriggers().filter(function(t){return t.getHandlerFunction()==='automationTick_';});if(own.length>1)throw new Error('統合トリガーが重複しています。');if(c.DRY_RUN==='true'){console.log('15分ごとの統合トリガーを1個作り、旧TXT単独トリガーを解除する予定です。');return {dryRun:true};}
+ var trigger=own[0]||ScriptApp.newTrigger('automationTick_').timeBased().everyMinutes(15).create();ScriptApp.getProjectTriggers().filter(function(t){return t.getHandlerFunction()==='transcriptExportTick_';}).forEach(function(t){ScriptApp.deleteTrigger(t);});console.log('TXT出力→取り込み→監視の統合トリガーを設定しました。');return {triggerId:String(trigger.getUniqueId())};});}
+function removeAutomationTrigger(){assertFinanceOperator_();return Ledger_.withLock(function(){var c=Stage2Drive_.config();if(c.DRY_RUN==='true'){console.log('自分の統合トリガーだけを解除する予定です。');return;}ScriptApp.getProjectTriggers().filter(function(t){return t.getHandlerFunction()==='automationTick_';}).forEach(function(t){ScriptApp.deleteTrigger(t);});console.log('統合トリガーを解除しました。');});}
+
+
 // config.js
 var Config_ = (function () {
   var defaults = { ENV: 'test', DRY_RUN: 'true', GENERATOR_MODE: 'LOCAL_CODEX',
@@ -435,13 +480,14 @@ function ingestFixturesToNotionTest() {
 var InboxIngest_ = (function () {
   function hash(value) { return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, JSON.stringify(value), Utilities.Charset.UTF_8).map(function (b) { return ('0' + ((b + 256) % 256).toString(16)).slice(-2); }).join(''); }
   function state(row) { return row && row.step_done_json ? JSON.parse(row.step_done_json) : {}; }
-  function run(onlyMeetingKey) {
+  function run(onlyMeetingKey, deadline, automatic) {
     var c = Stage2Drive_.config(), drive = Stage2Drive_.open(c);
     drive.within(c.LEDGER_SPREADSHEET_ID);
     if (c.CHATWORK_TOKEN && (!/^\d+$/.test(c.CHATWORK_ROOM_ID_TEST || '') || c.CHATWORK_ROOM_ID_TEST === c.CHATWORK_ROOM_ID)) throw new Error('Chatworkのテスト専用ルームIDが必要です。');
     var ledger = Stage2Ledger_.open(SpreadsheetApp.openById(c.LEDGER_SPREADSHEET_ID)), masters = ledger.masters();
     var env = NotionTestEnvironment_.open(true), minutes = env.schema(env.ids.minutes, 'minutes'), tasks = env.schema(env.ids.tasks, 'tasks');
     var inbox = drive.folder(drive.root.id, 'inbox', false), done = drive.folder(inbox.id, '_done', false), raw = drive.folder(drive.root.id, '00_受信', false);
+    if(automatic&&c.DRY_RUN==='false')ledger.rows('minutes').forEach(function(r){var s=state(r);if(s.error&&s.notion!=='pending'&&!s.appendPending&&s.chatwork!=='pending'&&(!s.automation_retry_at||Date.now()-Date.parse(s.automation_retry_at)>=15*60000)){s.error=false;s.automation_retry=true;s.automation_retry_at=new Date().toISOString();r.step_done_json=JSON.stringify(s);ledger.save(r);}});
     var rows = ledger.rows('minutes'), children = drive.children(inbox.id), files = children.filter(function (f) {
       if (!f.name.endsWith('.json')) return false;
       return !f.name.startsWith('local_') || LocalInboxReady_.check(drive, f, children);
@@ -449,10 +495,10 @@ var InboxIngest_ = (function () {
     rows.forEach(function (r) { var s = state(r); if (s.jsonId && !s.finished && !s.error && !files.some(function (f) { return f.id === s.jsonId; })) files.push(drive.within(s.jsonId)); });
     files = files.filter(function (f) { return !rows.some(function (r) { var s = state(r); return s.jsonId === f.id && s.error && s.modifiedTime === f.modifiedTime; }); });
     if (onlyMeetingKey) { var target = rows.find(function (r) { return r.meeting_key === onlyMeetingKey; }); var targetId = state(target).jsonId; files = files.filter(function (f) { return f.id === targetId; }); }
-    files.sort(function (a, b) { return String(a.createdTime || '').localeCompare(String(b.createdTime || '')) || a.id.localeCompare(b.id); });
+    files.sort(function (a, b) { var ar=rows.find(function(r){return state(r).jsonId===a.id;}),br=rows.find(function(r){return state(r).jsonId===b.id;});var priority=Number(!!state(ar).automation_retry)-Number(!!state(br).automation_retry);return priority||String(a.createdTime || '').localeCompare(String(b.createdTime || '')) || a.id.localeCompare(b.id); });
     var results = [], started = Date.now();
     files.slice(0, c.INGEST_BATCH).forEach(function (file) {
-      if (Date.now() - started > 240000) return;
+      if (Date.now() - started > 240000 || deadline && Date.now() > deadline) return;
       var row = null, steps = {}, key = 'invalid:' + file.id;
       function save() { row.step_done_json = JSON.stringify(steps); ledger.save(row); }
       try {
@@ -463,13 +509,21 @@ var InboxIngest_ = (function () {
         var prior = ledger.rows('minutes').find(function (r) { return r.meeting_key === key; });
         if (prior && state(prior).jsonId !== file.id) throw new Error('同じmeeting_keyの別JSONがあります。既存の行は変更しません。');
         row = prior || null; steps = state(row);
-        if (steps.hash && steps.hash !== hash(j)) throw new Error('取り込み中に判定JSONが変更されました。');
-        if (steps.finished) { results.push({ meeting_key: key, status: '取り込み済み' }); return; }
         var folder = steps.rawFolderId ? drive.within(steps.rawFolderId) : drive.folder(raw.id, key.replace(/:/g, '_'), false);
         var manifests = steps.manifestId ? [drive.within(steps.manifestId)] : drive.children(folder.id).filter(function (f) { return f.name === 'manifest.json'; });
         if (manifests.length !== 1) throw new Error('manifest.jsonを1件に特定できません。');
         var manifest = drive.readJSON(manifests[0].id);
         if (manifest.status !== 'ready' || manifest.meeting_key !== key || manifest.source !== j.source || !Number.isFinite(Date.parse(manifest.start))) throw new Error('manifestの状態・会議キー・日時が不正です。');
+        var notesOnly=manifest.input_quality==='notes_only'||manifest.transcript_source&&manifest.transcript_source.type==='gemini_notes';
+        if(notesOnly){
+          if(!j.minutes_markdown||j.minutes_doc_id)throw new Error('要確認：メモから作成する議事録はMarkdown本文が必要です。');
+          var notice='文字起こしなし・メモから作成';
+          if(!j.minutes_markdown.includes(notice))j.minutes_markdown='## 要確認\n- '+notice+'。原文との照合はできません。\n\n'+j.minutes_markdown;
+          if(!j.open_questions.includes(notice))j.open_questions.push(notice);
+          j.confidence='低';if(!j.reason.includes(notice))j.reason=(notice+'。'+j.reason).slice(0,200);
+        }
+        if (steps.hash && steps.hash !== hash(j)) throw new Error('取り込み中に判定JSONが変更されました。');
+        if (steps.finished) { results.push({ meeting_key: key, status: '取り込み済み' }); return; }
         var allowedKinds = ['recording', 'transcript', 'gemini', 'tldv_transcript'], rawFiles = [];
         Object.keys(manifest.files || {}).forEach(function (kind) {
           if (!allowedKinds.includes(kind)) throw new Error('manifestに未定義のファイル種別があります。');
@@ -518,12 +572,13 @@ var InboxIngest_ = (function () {
             placement_auto: j.placement, placement_final: plan.placement.placement, domains_auto: JSON.stringify(j.domains), domains_final: JSON.stringify(plan.payload.properties['事業部領域'].multi_select.map(function (v) { return v.name; })),
             related_project_ids_auto: JSON.stringify(j.related_project_ids), related_project_ids_final: JSON.stringify(plan.placement.related_project_ids), minutes_title: j.minutes_title,
             confidence: j.confidence, reason: j.reason, sensitive: j.sensitive, conflict: plan.placement.conflicts.length > 0, status: plan.placement.status,
-            notion_status: '未処理', raw_file_ids_json: JSON.stringify(manifest.files || {}), created_at: new Date().toISOString(), last_error: parsed.warnings.concat(plan.warnings).join(' ') };
+            notion_status: '未処理', raw_file_ids_json: JSON.stringify(manifest.files || {}), created_at: new Date().toISOString(), last_error: parsed.warnings.concat(plan.warnings,notesOnly?['文字起こしなし・メモから作成']:[]).join(' ') };
           steps = { jsonId: file.id, rawFolderId: folder.id, manifestId: manifests[0].id, hash: hash(j), contentHash: hash(blocks), modifiedTime: file.modifiedTime };
           save();
         }
         var display={jsonId:steps.jsonId,hash:steps.hash,summary:j.summary||{},taskCount:(j.task_proposals||[]).length};
         if(JSON.stringify(display).length<12000) steps.reviewDisplay=display; else delete steps.reviewDisplay;
+        if(notesOnly){steps.input_quality='notes_only';row.last_error='文字起こしなし・メモから作成';}
         steps.error = false; row.status = plan.placement.status;
         if (!row.meeting_folder_id) {
           var name = Utilities.formatDate(new Date(manifest.start), 'Asia/Tokyo', 'yyyy-MM-dd_HHmm') + '_' + InboxPlan_.safeName(manifest.title);
@@ -562,7 +617,7 @@ var InboxIngest_ = (function () {
           env.verifyMinutesPage(row.notion_page_id);
           if (steps.appendPending) throw new Error('本文追加の結果が不明です。二重追記しません。');
           while (steps.nextBlock < blocks.length) {
-            if (Date.now() - started > 240000) { save(); results.push({ meeting_key: key, status: '本文追加の続き待ち' }); return; }
+            if (Date.now() - started > 240000 || deadline && Date.now() > deadline) { save(); results.push({ meeting_key: key, status: '本文追加の続き待ち' }); return; }
             steps.appendPending = true; save();
             try { env.appendBlocks(row.notion_page_id, blocks.slice(steps.nextBlock, steps.nextBlock + 100)); }
             catch (e) { if (e.httpStatus === 403) { steps.appendPending = false; row.notion_status = 'Notion保留'; save(); } throw e; }
@@ -2497,6 +2552,13 @@ var TranscriptText_=(function(){
       var matches=tabs.filter(function(t){return (t.tabProperties||{}).tabId===source.tab_id;});
       if(matches.length!==1||!['文字起こし','transcript'].includes(String(matches[0].tabProperties.title||'').normalize('NFKC').trim().toLowerCase()))throw new Error('指定の文字起こしタブを確認できません。');
       body=(matches[0].documentTab||{}).body;
+    }else if(source.type==='gemini_notes'){
+      var notes=tabs.filter(function(t){return !['文字起こし','transcript'].includes(String((t.tabProperties||{}).title||'').normalize('NFKC').trim().toLowerCase());});
+      var named=notes.filter(function(t){return /^(メモ|notes|meeting notes|geminiによるメモ)$/i.test(String(t.tabProperties.title||'').trim());});
+      if(named.length===1)body=(named[0].documentTab||{}).body;
+      else if(notes.length===1)body=(notes[0].documentTab||{}).body;
+      else if(!tabs.length)body=document.body;
+      else throw new Error('要確認：メモのタブを一意に特定できません。');
     }else if(source.type==='file'){
       // 別ファイルは単一タブのみ自動選択します。複数なら文字起こしタブを一意に特定します。
       var candidates=tabs.filter(function(t){return ['文字起こし','transcript'].includes(String((t.tabProperties||{}).title||'').normalize('NFKC').trim().toLowerCase());});
@@ -2514,17 +2576,20 @@ var TranscriptText_=(function(){
     var text=body&&content(body.content);if(!text||!text.trim())throw new Error('文字起こし本文が空です。');return text;
   }
   function hash(text){return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,text,Utilities.Charset.UTF_8).map(function(b){return ('0'+((b+256)%256).toString(16)).slice(-2);}).join('');}
-  function run(){
+  function run(tolerateErrors){
     var c=Stage2Drive_.config(),drive=Stage2Drive_.open(c),raw=drive.folder(drive.root.id,'00_受信',false),results=[];
     if(!c.FOLDER_INBOX_RAW_TEST_ID||raw.id!==c.FOLDER_INBOX_RAW_TEST_ID)throw new Error('テスト受信IDが一致しません。');
-    var processed=0;
+    var memoWait=Number(c.MOVER_MEMO_WAIT_MIN||120);if(!Number.isInteger(memoWait)||memoWait<20||memoWait>2880)throw new Error('MOVER_MEMO_WAIT_MINは20〜2880です。');
+    var processed=0,started=Date.now();
     drive.children(raw.id).filter(function(f){return f.mimeType==='application/vnd.google-apps.folder';}).forEach(function(folder){
-      drive.within(folder.id);var children=drive.children(folder.id),manifests=children.filter(function(f){return f.name==='manifest.json';});
+      if(Date.now()-started>120000)return;
+      try{drive.within(folder.id);var children=drive.children(folder.id),manifests=children.filter(function(f){return f.name==='manifest.json';});
       if(!manifests.length)return;if(manifests.length!==1)throw new Error('manifestが重複しています。');
       var m=drive.readJSON(manifests[0].id);if(m.status!=='ready'||m.transcript_text)return;if(processed++>=c.INGEST_BATCH)return;
       if(!/^(meet|tldv):.+$/.test(m.meeting_key||'')||folder.name!==m.meeting_key.replace(/:/g,'_'))throw new Error('会議フォルダ名とキーが違います。');
       var source=m.transcript_source||(m.files&&{type:'file',file_id:m.files.transcript||m.files.tldv_transcript});
-      if(!source||!source.file_id||!['file','document_tab'].includes(source.type)||!Object.values(m.files||{}).includes(source.file_id))throw new Error('文字起こしの所在が不正です。');
+      if((!source||!source.file_id)&&m.files&&m.files.gemini&&Date.now()-Date.parse(m.end||m.created_at)>=memoWait*60000)source={type:'gemini_notes',file_id:m.files.gemini};
+      if(!source||!source.file_id||!['file','document_tab','gemini_notes'].includes(source.type)||!Object.values(m.files||{}).includes(source.file_id))throw new Error('文字起こしの所在が不正です。');
       var native=drive.within(source.file_id);if(!(native.parents||[]).includes(folder.id))throw new Error('文字起こしが会議フォルダ内にありません。');
       var text;
       if(native.mimeType==='application/vnd.google-apps.document')text=extract(GoogleApi_.docsGet(native.id,{includeTabsContent:true}),source);
@@ -2542,7 +2607,8 @@ var TranscriptText_=(function(){
       var fresh=GoogleApi_.get(folder.id,{supportsAllDrives:true,fields:'id,parents,trashed'}),mf=GoogleApi_.get(manifests[0].id,{supportsAllDrives:true,fields:'id,parents,trashed'});
       if(fresh.trashed||!fresh.parents||fresh.parents.length!==1||fresh.parents[0]!==raw.id||mf.trashed||!mf.parents||mf.parents.length!==1||mf.parents[0]!==folder.id||JSON.stringify(drive.readJSON(mf.id))!==JSON.stringify(m))throw new Error('書き出し直前に会議の所属・manifestが変わりました。');
       var saved=existing||drive.createFile(folder.id,'transcript.txt',text,'text/plain','transcript_text',m.meeting_key);
-      if(!m.transcript_text){m.transcript_text={file_id:saved.id,name:'transcript.txt',sha256:digest,characters:text.length,source:source,exported_at:new Date().toISOString()};GoogleApi_.update({},mf.id,Utilities.newBlob(JSON.stringify(m,null,2),'application/json','manifest.json'),{supportsAllDrives:true,fields:'id'});}
+      if(!m.transcript_text){if(source.type==='gemini_notes'){m.transcript_source=source;m.input_quality='notes_only';}m.transcript_text={file_id:saved.id,name:'transcript.txt',sha256:digest,characters:text.length,source:source,exported_at:new Date().toISOString()};GoogleApi_.update({},mf.id,Utilities.newBlob(JSON.stringify(m,null,2),'application/json','manifest.json'),{supportsAllDrives:true,fields:'id'});}
+      }catch(e){if(!tolerateErrors)throw e;console.log('TXT書き出し要確認：'+folder.name);results.push({folder:folder.name,status:'要確認',error:'文字起こし・メモの所在、タブ、権限、Google APIを確認してください。'});}
     });return {dryRun:c.DRY_RUN==='true',results:results};
   }
   return {extract:extract,hash:hash,run:run};

@@ -2,25 +2,30 @@ function moverRun(e){return Organizer_.lock(function(){
   var email=Organizer_.actor(true),c=Organizer_.config(),registration=OrganizerRegistration_.state();
   if(c.DRY_RUN==='false'&&!registration.registered)throw new Error('実際の移動は先に登録画面から登録してください。');
   if(e&&e.triggerUid&&String(e.triggerUid)!==registration.trigger_id)throw new Error('登録されているトリガーと一致しません。');
-  if(!/^[A-Za-z0-9_-]+$/.test(c.MOVER_TEST_EVENT_ID||''))throw new Error('MOVER_TEST_EVENT_IDに実機テスト用予定のIDを設定してください。他の会議は処理しません。');
+  if(c.MOVER_MODE==='TEST_EVENT'&&!/^[A-Za-z0-9_-]+$/.test(c.MOVER_TEST_EVENT_ID||''))throw new Error('MOVER_TEST_EVENT_IDに実機テスト用予定のIDを設定してください。他の会議は処理しません。');
   var drive=OrganizerDrive_.open(c),user=PropertiesService.getUserProperties(),now=Date.now(),results=[],events=[],token,started=now;
-  try{do{var args={timeMin:new Date(now-72*3600000).toISOString(),timeMax:new Date(now).toISOString(),singleEvents:true,showDeleted:false,maxResults:250};if(token)args.pageToken=token;var page=Calendar.Events.list('primary',args);events=events.concat(page.items||[]);token=page.nextPageToken;}while(token);
-  events=events.filter(function(ev){return ev.id===c.MOVER_TEST_EVENT_ID;});
-  if(!events.length)events=[Calendar.Events.get('primary',c.MOVER_TEST_EVENT_ID)];
+  try{do{var args={timeMin:new Date(now-72*3600000).toISOString(),timeMax:new Date(now).toISOString(),singleEvents:true,showDeleted:false,maxResults:250};if(token)args.pageToken=token;var page=Calendar.Events.list('primary',args);events=events.concat(page.items||[]);token=page.nextPageToken;}while(token&&Date.now()-started<120000);
+  if(c.MOVER_MODE==='TEST_EVENT'){events=events.filter(function(ev){return ev.id===c.MOVER_TEST_EVENT_ID;});
+  if(!events.length)events=[Calendar.Events.get('primary',c.MOVER_TEST_EVENT_ID)];}
+  else events=events.filter(function(ev){return ev.end&&Date.parse(ev.end.dateTime)>=now-72*3600000;});
   events.forEach(function(event){
     if(Date.now()-started>240000)return;
-    var plan=MoverPlan_.event(event,email,now,c.MOVER_WAIT_MIN);if(!plan){results.push({eventId:event.id,status:'対象外・終了待ち',message:'自分主催のMeet付き予定、終了待ち時間を確認してください。'});return;}
+    try{var plan=MoverPlan_.event(event,email,now,c.MOVER_WAIT_MIN,c.MOVER_MODE);if(!plan){if(c.MOVER_MODE==='AUTO')return;results.push({eventId:event.id,status:'対象外・終了待ち',message:'自分主催のMeet付き予定、終了待ち時間を確認してください。'});return;}
     var stateKey='mover:'+Organizer_.hash(plan.key),saved=user.getProperty(stateKey),state=saved?JSON.parse(saved):{};
     if(state.ready){results.push({meeting_key:plan.key,status:'処理済み',folderId:state.folderId,manifestId:state.manifestId,transcript_source:state.transcriptSource||null});return;}
     var folder=drive.child(drive.raw.id,plan.folderKey,'meeting_raw',plan.key,false),meta={};
     (event.attachments||[]).forEach(function(a){if(a.fileId&&!meta[a.fileId])meta[a.fileId]=drive.get(a.fileId);});
     var files=MoverPlan_.files(event.attachments,meta);files.ignored.forEach(function(f){console.log('判定できない添付は移動しません: '+f.name);});
     var items=Object.keys(files.found);
+    if(c.MOVER_MODE==='AUTO'&&!items.length)return;
     items.forEach(function(k){drive.validateSource(files.found[k],folder,plan.key,email);});
     var transcriptSource=OrganizerTranscript_.resolve(files);
     if(transcriptSource)files.missing=files.missing.filter(function(k){return k!=='transcript';});
+    if(!transcriptSource&&files.found.gemini&&now-Date.parse(plan.manifest.end)>=c.MOVER_MEMO_WAIT_MIN*60000){transcriptSource={type:'gemini_notes',file_id:files.found.gemini.id};plan.manifest.input_quality='notes_only';}
     plan.manifest.transcript_source=transcriptSource;
-    if(files.missing.length&&!plan.expired){results.push({meeting_key:plan.key,status:'添付待ち',missing:files.missing});return;}
+    if(c.MOVER_MODE==='AUTO'&&!transcriptSource&&now-Date.parse(plan.manifest.end)>=c.MOVER_MEMO_WAIT_MIN*60000){results.push({meeting_key:plan.key,status:'要確認・文字起こしもメモもありません',missing:files.missing});return;}
+    if(files.missing.length&&!plan.expired&&!(transcriptSource&&(c.MOVER_MODE==='AUTO'||transcriptSource.type==='gemini_notes'))){results.push({meeting_key:plan.key,status:'添付待ち',missing:files.missing});return;}
+    if(c.MOVER_MODE==='AUTO'&&!transcriptSource){results.push({meeting_key:plan.key,status:'要確認・文字起こしもメモもありません',missing:files.missing});return;}
     var planned={meeting_key:plan.key,status:c.DRY_RUN==='true'?'移動予定':'移動中',folderName:plan.folderKey,files:items.map(function(k){var f=files.found[k];return {kind:k,id:f.id,name:f.name,from:f.parents[0],to:folder?folder.id:c.FOLDER_INBOX_RAW_TEST_ID+'/'+plan.folderKey};}),missing:files.missing,transcript_source:transcriptSource};console.log(JSON.stringify(planned));
     if(c.DRY_RUN==='true'){results.push(planned);return;}
     folder=folder||drive.child(drive.raw.id,plan.folderKey,'meeting_raw',plan.key,true);state.folderId=folder.id;state.ready=false;user.setProperty(stateKey,JSON.stringify(state));
@@ -29,6 +34,7 @@ function moverRun(e){return Organizer_.lock(function(){
     var manifest=drive.json(folder.id,'manifest.json',plan.manifest,'manifest');
     state.ready=true;state.manifestId=manifest.id;state.transcriptSource=transcriptSource;user.setProperty(stateKey,JSON.stringify(state));
     results.push({meeting_key:plan.key,status:'ready',folderId:folder.id,manifestId:manifest.id,missing:files.missing,transcript_source:transcriptSource});
+    }catch(eventError){if(c.MOVER_MODE!=='AUTO')throw eventError;results.push({eventId:event.id,status:'要確認・会議の取り込みに失敗しました'});console.log('自動取り込み要確認：GAS-Bの添付・権限を確認してください。');}
   });
     if(c.DRY_RUN==='false'){registration.last_run_at=new Date().toISOString();registration.last_result=results.map(function(r){return r.status;}).join('／');OrganizerRegistration_.save(registration);OrganizerRegistration_.receipt(c,drive,email,registration);}
   }catch(err){console.log('GAS-B処理を停止しました: '+err.message);if(c.DRY_RUN==='false'){registration.last_run_at=new Date().toISOString();registration.last_result='エラー：'+String(err.message).slice(0,160);OrganizerRegistration_.save(registration);try{OrganizerRegistration_.receipt(c,drive,email,registration);}catch(ignore){console.log('登録状況の更新も失敗しました。GASの実行履歴を確認してください。');}}throw err;}

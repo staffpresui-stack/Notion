@@ -4,6 +4,14 @@
 
 ---
 
+## テスト環境の無人運転（最新）
+
+26bd4d4のユーザー実機通し合格後、ENV=testのまま無人運転へ進めます。BはMOVER_MODE=TEST_EVENT（既定）/AUTO。AUTOは本人主催・Meet付き・終了待機後・終了が直近72時間内の予定を対象、非公開と【記録なし】を除外し、記録が無い予定は静かに無視。録画は任意です。文字起こしがなくメモだけならMOVER_MEMO_WAIT_MIN（既定120分）後にgemini_notesとして利用。Doc/Notion/判定/台帳へ「文字起こしなし・メモから作成」を明記、確信度低で確認へ回します。曖昧なメモは要確認で止め、元データは書き換えません。
+
+AのautomationTick_はfinance@専用、単一Ledgerロック内でTXT出力→ingest→監視。setupAutomationTriggerで15分1個、旧TXT単独トリガーは移行解除。安全に再試行できる要対応は新着優先で15分おきに再検査、応答不明のNotion/Chatwork等は再送せず保留。TXT出力後GENERATOR_TIMEOUT_MIN（120分）で有効JSON/取り込みが未完了、Macの直近4時間でLOCAL_FAILURE_ALERT_COUNT（3）連続失敗、TXT/取り込み要対応をchange_logとChatwork予定ログへ記録。testの監視は実投稿しません。同じ障害を抑制し回復・再発を記録。Macは毎実行で_test/_local_codexに成功/失敗の時刻レコードを新規保存します。
+
+正常時はA/BのDRY_RUN=falseを維持。初期設定・登録は一度必要。全手順・無人通し・停止試験・本番残作業はAUTOMATION_TEST.md。本番切替は未承認です。
+
 ## Google APIの一時障害
 
 Drive get/list/update/createとDocs getは共通ラッパーを使い、5xx・Internal/Backend Error・rate limitだけ初回＋4回、0.5→1→2→4秒で再試行。権限不足・404等は即停止します。作成は事前発行IDを固定し、ID非対応Doc/Sheetsは目印による照合を優先。結果不明で一覧に現れない場合は再送せず保留し、GOOGLE_CREATE_PENDING:*を維持。移動は親を再取得して差分だけ再適用。DRY_RUN・test制限・既存の冪等記録は維持します。詳しくはGOOGLE_RETRY_UPDATE.md。

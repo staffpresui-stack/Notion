@@ -11,6 +11,10 @@ var Organizer_ = (function () {
     var c=PropertiesService.getScriptProperties().getProperties();
     if(c.ENV!=='test' || !['true','false'].includes(c.DRY_RUN)) throw new Error('ENV=testと明示的なDRY_RUNが必要です。');
     Object.keys(ids).forEach(function(k){if(c[k]!==ids[k])throw new Error(k+'が指定の共有ドライブ・テスト領域と一致しません。');});
+    c.MOVER_MODE=c.MOVER_MODE||'TEST_EVENT';
+    if(!['TEST_EVENT','AUTO'].includes(c.MOVER_MODE))throw new Error('MOVER_MODEはTEST_EVENTまたはAUTOです。');
+    c.MOVER_MEMO_WAIT_MIN=Number(c.MOVER_MEMO_WAIT_MIN||120);
+    if(!Number.isInteger(c.MOVER_MEMO_WAIT_MIN)||c.MOVER_MEMO_WAIT_MIN<20||c.MOVER_MEMO_WAIT_MIN>2880)throw new Error('MOVER_MEMO_WAIT_MINは20〜2880です。');
     c.MOVER_INTERVAL_MIN=Number(c.MOVER_INTERVAL_MIN||15);c.MOVER_WAIT_MIN=Number(c.MOVER_WAIT_MIN||20);
     if(![1,5,10,15,30].includes(c.MOVER_INTERVAL_MIN))throw new Error('MOVER_INTERVAL_MINは1・5・10・15・30です。');
     if(!Number.isInteger(c.MOVER_WAIT_MIN)||c.MOVER_WAIT_MIN<0||c.MOVER_WAIT_MIN>1440)throw new Error('MOVER_WAIT_MINは0〜1440です。');

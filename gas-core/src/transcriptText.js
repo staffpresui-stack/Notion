@@ -9,6 +9,13 @@ var TranscriptText_=(function(){
       var matches=tabs.filter(function(t){return (t.tabProperties||{}).tabId===source.tab_id;});
       if(matches.length!==1||!['文字起こし','transcript'].includes(String(matches[0].tabProperties.title||'').normalize('NFKC').trim().toLowerCase()))throw new Error('指定の文字起こしタブを確認できません。');
       body=(matches[0].documentTab||{}).body;
+    }else if(source.type==='gemini_notes'){
+      var notes=tabs.filter(function(t){return !['文字起こし','transcript'].includes(String((t.tabProperties||{}).title||'').normalize('NFKC').trim().toLowerCase());});
+      var named=notes.filter(function(t){return /^(メモ|notes|meeting notes|geminiによるメモ)$/i.test(String(t.tabProperties.title||'').trim());});
+      if(named.length===1)body=(named[0].documentTab||{}).body;
+      else if(notes.length===1)body=(notes[0].documentTab||{}).body;
+      else if(!tabs.length)body=document.body;
+      else throw new Error('要確認：メモのタブを一意に特定できません。');
     }else if(source.type==='file'){
       // 別ファイルは単一タブのみ自動選択します。複数なら文字起こしタブを一意に特定します。
       var candidates=tabs.filter(function(t){return ['文字起こし','transcript'].includes(String((t.tabProperties||{}).title||'').normalize('NFKC').trim().toLowerCase());});
@@ -26,17 +33,20 @@ var TranscriptText_=(function(){
     var text=body&&content(body.content);if(!text||!text.trim())throw new Error('文字起こし本文が空です。');return text;
   }
   function hash(text){return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,text,Utilities.Charset.UTF_8).map(function(b){return ('0'+((b+256)%256).toString(16)).slice(-2);}).join('');}
-  function run(){
+  function run(tolerateErrors){
     var c=Stage2Drive_.config(),drive=Stage2Drive_.open(c),raw=drive.folder(drive.root.id,'00_受信',false),results=[];
     if(!c.FOLDER_INBOX_RAW_TEST_ID||raw.id!==c.FOLDER_INBOX_RAW_TEST_ID)throw new Error('テスト受信IDが一致しません。');
-    var processed=0;
+    var memoWait=Number(c.MOVER_MEMO_WAIT_MIN||120);if(!Number.isInteger(memoWait)||memoWait<20||memoWait>2880)throw new Error('MOVER_MEMO_WAIT_MINは20〜2880です。');
+    var processed=0,started=Date.now();
     drive.children(raw.id).filter(function(f){return f.mimeType==='application/vnd.google-apps.folder';}).forEach(function(folder){
-      drive.within(folder.id);var children=drive.children(folder.id),manifests=children.filter(function(f){return f.name==='manifest.json';});
+      if(Date.now()-started>120000)return;
+      try{drive.within(folder.id);var children=drive.children(folder.id),manifests=children.filter(function(f){return f.name==='manifest.json';});
       if(!manifests.length)return;if(manifests.length!==1)throw new Error('manifestが重複しています。');
       var m=drive.readJSON(manifests[0].id);if(m.status!=='ready'||m.transcript_text)return;if(processed++>=c.INGEST_BATCH)return;
       if(!/^(meet|tldv):.+$/.test(m.meeting_key||'')||folder.name!==m.meeting_key.replace(/:/g,'_'))throw new Error('会議フォルダ名とキーが違います。');
       var source=m.transcript_source||(m.files&&{type:'file',file_id:m.files.transcript||m.files.tldv_transcript});
-      if(!source||!source.file_id||!['file','document_tab'].includes(source.type)||!Object.values(m.files||{}).includes(source.file_id))throw new Error('文字起こしの所在が不正です。');
+      if((!source||!source.file_id)&&m.files&&m.files.gemini&&Date.now()-Date.parse(m.end||m.created_at)>=memoWait*60000)source={type:'gemini_notes',file_id:m.files.gemini};
+      if(!source||!source.file_id||!['file','document_tab','gemini_notes'].includes(source.type)||!Object.values(m.files||{}).includes(source.file_id))throw new Error('文字起こしの所在が不正です。');
       var native=drive.within(source.file_id);if(!(native.parents||[]).includes(folder.id))throw new Error('文字起こしが会議フォルダ内にありません。');
       var text;
       if(native.mimeType==='application/vnd.google-apps.document')text=extract(GoogleApi_.docsGet(native.id,{includeTabsContent:true}),source);
@@ -54,7 +64,8 @@ var TranscriptText_=(function(){
       var fresh=GoogleApi_.get(folder.id,{supportsAllDrives:true,fields:'id,parents,trashed'}),mf=GoogleApi_.get(manifests[0].id,{supportsAllDrives:true,fields:'id,parents,trashed'});
       if(fresh.trashed||!fresh.parents||fresh.parents.length!==1||fresh.parents[0]!==raw.id||mf.trashed||!mf.parents||mf.parents.length!==1||mf.parents[0]!==folder.id||JSON.stringify(drive.readJSON(mf.id))!==JSON.stringify(m))throw new Error('書き出し直前に会議の所属・manifestが変わりました。');
       var saved=existing||drive.createFile(folder.id,'transcript.txt',text,'text/plain','transcript_text',m.meeting_key);
-      if(!m.transcript_text){m.transcript_text={file_id:saved.id,name:'transcript.txt',sha256:digest,characters:text.length,source:source,exported_at:new Date().toISOString()};GoogleApi_.update({},mf.id,Utilities.newBlob(JSON.stringify(m,null,2),'application/json','manifest.json'),{supportsAllDrives:true,fields:'id'});}
+      if(!m.transcript_text){if(source.type==='gemini_notes'){m.transcript_source=source;m.input_quality='notes_only';}m.transcript_text={file_id:saved.id,name:'transcript.txt',sha256:digest,characters:text.length,source:source,exported_at:new Date().toISOString()};GoogleApi_.update({},mf.id,Utilities.newBlob(JSON.stringify(m,null,2),'application/json','manifest.json'),{supportsAllDrives:true,fields:'id'});}
+      }catch(e){if(!tolerateErrors)throw e;console.log('TXT書き出し要確認：'+folder.name);results.push({folder:folder.name,status:'要確認',error:'文字起こし・メモの所在、タブ、権限、Google APIを確認してください。'});}
     });return {dryRun:c.DRY_RUN==='true',results:results};
   }
   return {extract:extract,hash:hash,run:run};

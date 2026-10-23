@@ -1,13 +1,14 @@
 var InboxIngest_ = (function () {
   function hash(value) { return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, JSON.stringify(value), Utilities.Charset.UTF_8).map(function (b) { return ('0' + ((b + 256) % 256).toString(16)).slice(-2); }).join(''); }
   function state(row) { return row && row.step_done_json ? JSON.parse(row.step_done_json) : {}; }
-  function run(onlyMeetingKey) {
+  function run(onlyMeetingKey, deadline, automatic) {
     var c = Stage2Drive_.config(), drive = Stage2Drive_.open(c);
     drive.within(c.LEDGER_SPREADSHEET_ID);
     if (c.CHATWORK_TOKEN && (!/^\d+$/.test(c.CHATWORK_ROOM_ID_TEST || '') || c.CHATWORK_ROOM_ID_TEST === c.CHATWORK_ROOM_ID)) throw new Error('Chatworkのテスト専用ルームIDが必要です。');
     var ledger = Stage2Ledger_.open(SpreadsheetApp.openById(c.LEDGER_SPREADSHEET_ID)), masters = ledger.masters();
     var env = NotionTestEnvironment_.open(true), minutes = env.schema(env.ids.minutes, 'minutes'), tasks = env.schema(env.ids.tasks, 'tasks');
     var inbox = drive.folder(drive.root.id, 'inbox', false), done = drive.folder(inbox.id, '_done', false), raw = drive.folder(drive.root.id, '00_受信', false);
+    if(automatic&&c.DRY_RUN==='false')ledger.rows('minutes').forEach(function(r){var s=state(r);if(s.error&&s.notion!=='pending'&&!s.appendPending&&s.chatwork!=='pending'&&(!s.automation_retry_at||Date.now()-Date.parse(s.automation_retry_at)>=15*60000)){s.error=false;s.automation_retry=true;s.automation_retry_at=new Date().toISOString();r.step_done_json=JSON.stringify(s);ledger.save(r);}});
     var rows = ledger.rows('minutes'), children = drive.children(inbox.id), files = children.filter(function (f) {
       if (!f.name.endsWith('.json')) return false;
       return !f.name.startsWith('local_') || LocalInboxReady_.check(drive, f, children);
@@ -15,10 +16,10 @@ var InboxIngest_ = (function () {
     rows.forEach(function (r) { var s = state(r); if (s.jsonId && !s.finished && !s.error && !files.some(function (f) { return f.id === s.jsonId; })) files.push(drive.within(s.jsonId)); });
     files = files.filter(function (f) { return !rows.some(function (r) { var s = state(r); return s.jsonId === f.id && s.error && s.modifiedTime === f.modifiedTime; }); });
     if (onlyMeetingKey) { var target = rows.find(function (r) { return r.meeting_key === onlyMeetingKey; }); var targetId = state(target).jsonId; files = files.filter(function (f) { return f.id === targetId; }); }
-    files.sort(function (a, b) { return String(a.createdTime || '').localeCompare(String(b.createdTime || '')) || a.id.localeCompare(b.id); });
+    files.sort(function (a, b) { var ar=rows.find(function(r){return state(r).jsonId===a.id;}),br=rows.find(function(r){return state(r).jsonId===b.id;});var priority=Number(!!state(ar).automation_retry)-Number(!!state(br).automation_retry);return priority||String(a.createdTime || '').localeCompare(String(b.createdTime || '')) || a.id.localeCompare(b.id); });
     var results = [], started = Date.now();
     files.slice(0, c.INGEST_BATCH).forEach(function (file) {
-      if (Date.now() - started > 240000) return;
+      if (Date.now() - started > 240000 || deadline && Date.now() > deadline) return;
       var row = null, steps = {}, key = 'invalid:' + file.id;
       function save() { row.step_done_json = JSON.stringify(steps); ledger.save(row); }
       try {
@@ -29,13 +30,21 @@ var InboxIngest_ = (function () {
         var prior = ledger.rows('minutes').find(function (r) { return r.meeting_key === key; });
         if (prior && state(prior).jsonId !== file.id) throw new Error('同じmeeting_keyの別JSONがあります。既存の行は変更しません。');
         row = prior || null; steps = state(row);
-        if (steps.hash && steps.hash !== hash(j)) throw new Error('取り込み中に判定JSONが変更されました。');
-        if (steps.finished) { results.push({ meeting_key: key, status: '取り込み済み' }); return; }
         var folder = steps.rawFolderId ? drive.within(steps.rawFolderId) : drive.folder(raw.id, key.replace(/:/g, '_'), false);
         var manifests = steps.manifestId ? [drive.within(steps.manifestId)] : drive.children(folder.id).filter(function (f) { return f.name === 'manifest.json'; });
         if (manifests.length !== 1) throw new Error('manifest.jsonを1件に特定できません。');
         var manifest = drive.readJSON(manifests[0].id);
         if (manifest.status !== 'ready' || manifest.meeting_key !== key || manifest.source !== j.source || !Number.isFinite(Date.parse(manifest.start))) throw new Error('manifestの状態・会議キー・日時が不正です。');
+        var notesOnly=manifest.input_quality==='notes_only'||manifest.transcript_source&&manifest.transcript_source.type==='gemini_notes';
+        if(notesOnly){
+          if(!j.minutes_markdown||j.minutes_doc_id)throw new Error('要確認：メモから作成する議事録はMarkdown本文が必要です。');
+          var notice='文字起こしなし・メモから作成';
+          if(!j.minutes_markdown.includes(notice))j.minutes_markdown='## 要確認\n- '+notice+'。原文との照合はできません。\n\n'+j.minutes_markdown;
+          if(!j.open_questions.includes(notice))j.open_questions.push(notice);
+          j.confidence='低';if(!j.reason.includes(notice))j.reason=(notice+'。'+j.reason).slice(0,200);
+        }
+        if (steps.hash && steps.hash !== hash(j)) throw new Error('取り込み中に判定JSONが変更されました。');
+        if (steps.finished) { results.push({ meeting_key: key, status: '取り込み済み' }); return; }
         var allowedKinds = ['recording', 'transcript', 'gemini', 'tldv_transcript'], rawFiles = [];
         Object.keys(manifest.files || {}).forEach(function (kind) {
           if (!allowedKinds.includes(kind)) throw new Error('manifestに未定義のファイル種別があります。');
@@ -84,12 +93,13 @@ var InboxIngest_ = (function () {
             placement_auto: j.placement, placement_final: plan.placement.placement, domains_auto: JSON.stringify(j.domains), domains_final: JSON.stringify(plan.payload.properties['事業部領域'].multi_select.map(function (v) { return v.name; })),
             related_project_ids_auto: JSON.stringify(j.related_project_ids), related_project_ids_final: JSON.stringify(plan.placement.related_project_ids), minutes_title: j.minutes_title,
             confidence: j.confidence, reason: j.reason, sensitive: j.sensitive, conflict: plan.placement.conflicts.length > 0, status: plan.placement.status,
-            notion_status: '未処理', raw_file_ids_json: JSON.stringify(manifest.files || {}), created_at: new Date().toISOString(), last_error: parsed.warnings.concat(plan.warnings).join(' ') };
+            notion_status: '未処理', raw_file_ids_json: JSON.stringify(manifest.files || {}), created_at: new Date().toISOString(), last_error: parsed.warnings.concat(plan.warnings,notesOnly?['文字起こしなし・メモから作成']:[]).join(' ') };
           steps = { jsonId: file.id, rawFolderId: folder.id, manifestId: manifests[0].id, hash: hash(j), contentHash: hash(blocks), modifiedTime: file.modifiedTime };
           save();
         }
         var display={jsonId:steps.jsonId,hash:steps.hash,summary:j.summary||{},taskCount:(j.task_proposals||[]).length};
         if(JSON.stringify(display).length<12000) steps.reviewDisplay=display; else delete steps.reviewDisplay;
+        if(notesOnly){steps.input_quality='notes_only';row.last_error='文字起こしなし・メモから作成';}
         steps.error = false; row.status = plan.placement.status;
         if (!row.meeting_folder_id) {
           var name = Utilities.formatDate(new Date(manifest.start), 'Asia/Tokyo', 'yyyy-MM-dd_HHmm') + '_' + InboxPlan_.safeName(manifest.title);
@@ -128,7 +138,7 @@ var InboxIngest_ = (function () {
           env.verifyMinutesPage(row.notion_page_id);
           if (steps.appendPending) throw new Error('本文追加の結果が不明です。二重追記しません。');
           while (steps.nextBlock < blocks.length) {
-            if (Date.now() - started > 240000) { save(); results.push({ meeting_key: key, status: '本文追加の続き待ち' }); return; }
+            if (Date.now() - started > 240000 || deadline && Date.now() > deadline) { save(); results.push({ meeting_key: key, status: '本文追加の続き待ち' }); return; }
             steps.appendPending = true; save();
             try { env.appendBlocks(row.notion_page_id, blocks.slice(steps.nextBlock, steps.nextBlock + 100)); }
             catch (e) { if (e.httpStatus === 403) { steps.appendPending = false; row.notion_status = 'Notion保留'; save(); } throw e; }

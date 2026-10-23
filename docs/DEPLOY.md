@@ -1,3 +1,5 @@
+無人テスト運転の最新手順は[AUTOMATION_TEST.md](AUTOMATION_TEST.md)。A/BのコードとMac runnerを更新し、一度だけ設定・登録します。
+
 Drive/Docs一時エラーの共通再試行は[GOOGLE_RETRY_UPDATE.md](GOOGLE_RETRY_UPDATE.md)を参照。今回スコープ変更・追加プロパティはありません。
 
 現在の生成方式はPCのCodex CLI（LOCAL_CODEX）です。GAS-AへのDocsサービス追加とPC設定は[LOCAL_CODEX_TEST.md](LOCAL_CODEX_TEST.md)を参照してください。OpenAI API方式は採用しません。
