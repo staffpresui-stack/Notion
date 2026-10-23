@@ -17,6 +17,7 @@ function harness(dry='false'){
  ctx.Calendar.Events.get=(calendar,id)=>{assert.equal(calendar,'primary');assert.equal(id,event.id);return clone(event)};
  for(const name of ['googleApi.generated','config','plan','registry','drive','register','transcript','mover'])vm.runInContext(fs.readFileSync('gas-organizer/src/'+name+'.js','utf8'),ctx);
  ctx.Docs={Documents:{get:(id,args)=>{calls.push({op:'docs-get',id,args});return {documentId:id,tabs:[]}}}};
+ require('./advancedContracts.cjs').enforce(ctx);
  const nonce=ctx.Organizer_.nonce(email);
  return {ctx,props,user,files,writes,calls,triggers,event,logs,nonce,register:()=>ctx.registerOrganizer(nonce),setActive:v=>active=v,setEffective:v=>effective=v,failAt:n=>failMove=n};
 }

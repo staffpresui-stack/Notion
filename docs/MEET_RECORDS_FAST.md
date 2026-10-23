@@ -96,3 +96,11 @@ Drive/APIの429/一時障害の再試行は既存ラッパーを利用。差分�
 - [Drive API上限（2026年5月から新方式、既存枠はConsole優先）](https://developers.google.com/workspace/drive/api/guides/limits)
 - [Calendar events.list](https://developers.google.com/workspace/calendar/api/v3/reference/events/list)
 - [Meet conferenceRecords.list（将来の厳密な終了判定の選択肢）](https://developers.google.com/workspace/meet/api/reference/rest/v2/conferenceRecords/list)
+
+## e7c7944反映後の差分API修正
+
+ユーザー実機で、Apps Script拡張サービスの `Drive.Changes.list` に必要なpageToken位置引数の不足が判明。A/Bとも `Drive.Changes.list(pageToken, optionalArgs)` に修正し、optionalArgsからpageTokenを取り除きます。`getStartPageToken(optionalArgs)` は元の形で正しいため維持。Files.list/get/create/update/generateIds、Calendar.Events.list/get、Docs.Documents.getも公式DiscoveryのparameterOrderとApps Scriptのbody→必須引数→media→optional規則を点検しました。
+
+再反映はA/Bのdist/Code.gsだけ。スクリプトプロパティ・差分token・安定確認・処理済み記録・通常版manifest・既存トリガーを変更/リセットしません。GASへ直接入れた暫定修正と同じ動作です。初回だけでなく、差分確認の2回目以降が連続して成功することを実行履歴で確認します。拡張サービス用モックは今回の単一オブジェクト誤形式を拒否するように変更しました。委任のREST APIはHTTP queryにpageTokenを含める方式が正しく、変更しません。
+
+照合元：[Apps Script拡張サービスの引数規則](https://developers.google.com/apps-script/guides/services/advanced)、[Drive v3 Discovery](https://www.googleapis.com/discovery/v1/apis/drive/v3/rest)、[Calendar v3 Discovery](https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest)、[Docs v1 Discovery](https://www.googleapis.com/discovery/v1/apis/docs/v1/rest)。

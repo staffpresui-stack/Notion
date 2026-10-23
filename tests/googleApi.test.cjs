@@ -10,6 +10,7 @@ function harness(){
   create(body,blob,args){assert.equal(args.supportsAllDrives,true);creates.push(clone(body));const f={...clone(body),id:body.id||'native-'+(++idSeq)};files[f.id]=f;return clone(f);},
   update(body,id,blob,args){updates.push({body:clone(body),id,blob,args:clone(args)});return {id};}
  }},Docs:{Documents:{get:()=>({documentId:'doc'})}}});
+ require('./helpers/advancedContracts.cjs').enforce(ctx);
  vm.runInContext(fs.readFileSync('shared/googleApi.js','utf8'),ctx);return {ctx,api:ctx.GoogleApi_,props,files,sleeps,logs,creates,updates};
 }
 test('再試行対象は5xx・Internal/Backend Error・rate limitのみ。権限・不在・不正値は即停止',()=>{
