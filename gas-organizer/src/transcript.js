@@ -14,11 +14,11 @@ var OrganizerTranscript_=(function(){
     if(matches.length>1)throw new Error('文字起こしタブが複数あります。自動選択せず停止します。');
     return matches[0]||null;
   }
-  function resolve(files){
+  function resolve(files,docsGet){
     if(files.found.transcript)return {type:'file',file_id:files.found.transcript.id};
     if(!files.found.gemini)return null;
     var id=files.found.gemini.id,document;
-    try{document=GoogleApi_.docsGet(id,{includeTabsContent:true,fields:'documentId,tabs(tabProperties(tabId,title),childTabs)'});}
+    try{document=(docsGet||GoogleApi_.docsGet)(id,{includeTabsContent:true,fields:'documentId,tabs(tabProperties(tabId,title),childTabs)'});}
     catch(e){throw new Error('Geminiメモのタブを読み取れません。Docs API・読み取り権限を確認してください：'+String(e.message||'取得失敗').slice(0,220));}
     if(!document||document.documentId!==id)throw new Error('取得したGeminiメモのドキュメントIDが一致しません。');
     var tab=findTab(document);

@@ -1,5 +1,7 @@
 # MTG議事録自動化：Codex 用の指示書一式
 
+最新：6c9c653の本番無人通し合格済み。Workspace全社員の本人操作不要の追加方式は[管理者収集手順](docs/DOMAIN_DELEGATION.md)。GAS-Aは変更せず、既存GAS-Bに委任収集を追加します。
+
 現在はfinance@premiere-mode.co.jpのGASと共有ドライブを使います。最新の設定値と実行順は [共有ドライブ実行手順](docs/SHARED_DRIVE_TEST.md) を参照してください。Notionのオーナー・内部インテグレーションはcontact@のままです。
 
 プレミアモード社の Codex 環境で、議事録自動化（Google Meet／tl;dv → ChatGPT → GAS → Drive・Notion・Chatwork・確認画面）を構築するための資料です。Codex はこのフォルダを開くと `AGENTS.md` を自動で読みます。

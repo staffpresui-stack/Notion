@@ -16,3 +16,8 @@ setup-inputs/
 # PC固有パス・生成資料は共有テスト領域に置き、Gitに含めません。
 local/*.local.*
 _local_codex/
+
+# サービスアカウントの実鍵はGASのプロパティだけで管理します。
+*service-account*.json
+*service_account*.json
+SA_KEY_JSON*

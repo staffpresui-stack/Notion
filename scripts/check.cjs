@@ -12,6 +12,10 @@ for (const root of ['gas-core','gas-organizer']) for (const file of fs.readdirSy
   const html = fs.readFileSync(path.join(root,'src/ui',file),'utf8');
   for (const match of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) new vm.Script(match[1],{filename:file});
 }
+const delegated = JSON.parse(fs.readFileSync('gas-organizer/appsscript.delegated.json','utf8'));
+const standard = JSON.parse(fs.readFileSync('gas-organizer/appsscript.json','utf8'));
+if (delegated.webapp.executeAs !== 'USER_ACCESSING' || delegated.webapp.access !== 'DOMAIN' || delegated.runtimeVersion !== 'V8') throw new Error('委任版も本人実行・組織内公開を維持してください。');
+if (JSON.stringify(delegated.oauthScopes) !== JSON.stringify([...standard.oauthScopes,'https://www.googleapis.com/auth/script.external_request'])) throw new Error('委任版の追加GASスコープはexternal_requestだけです。');
 const Ajv = require('ajv/dist/2020');
 const validate = new Ajv({ strict: true }).compile(JSON.parse(fs.readFileSync('schemas/inbox_judgement.schema.json')));
 for (const file of fs.readdirSync('fixtures').filter(f => f.startsWith('judgement_'))) {

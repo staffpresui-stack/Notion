@@ -14,6 +14,9 @@
 
 ## 最新のユーザー指定（元の設計より優先）
 
+**2026-10-23追記（6c9c653本番通し合格後）**：管理者のドメイン全体の委任による全Workspaceユーザーの会議収集を追加。実装・ローカル検証・workへのpushのみCodexが実行し、Cloud/管理コンソール/鍵投入/GAS実行は人。同じGAS-Bに追加して①各自登録とScriptLock・共通記録を共有し、GAS-Aの本番tickは変更しない。SA_KEY_JSONは秘密値。DirectoryとLicense ManagerをGET照合して停止・未ライセンス・明示除外を除外。本人操作不要の②と①を併用、個別トリガーの自動停止は正常走査確認後の管理者フラグだけ。通常版manifestは維持し、委任版の追加GASスコープはexternal_requestのみ。設定と再認証の注意は `docs/DOMAIN_DELEGATION.md`。別GAS-Cで同時稼働するとロックを共有できないので禁止。
+
+
 **2026-10-23の最新方針（以下の過去履歴より優先）**：PC常時運転は不可、LOCAL_CODEXは実行経路から外しCodexは開発専用。GEMINI_NOTESを既定とし既存Gemini/tl;dv AIメモをGASで転記・規則仕分け、外部AI APIは不使用。本番ENV=prodの実装・準備関数は今回ユーザーが許可。実GAS/Notion/Chatwork設定・書込は引き続きユーザー。本番DB/Drive/台帳とtestを分離、テスト記録は持ち込まない。社員の会社Workspace本人はB登録可能、個人Gmail/記録ライセンスなしはtl;dv無料枠内のNotion受信経路。Notionの本番確認は社員ゲストがNotion上で行う。Chatworkは451196858・メンションなし。tl;dv残数の正確な自動取得は未確認なので、登録された残数と共有業務カレンダー未着を区別して監視。マスタ取り込みはimportPeopleFromSheet。最新手順は `docs/GEMINI_NOTES_PRODUCTION.md`。旧テスト専用ルールは旧経路に残し、まとめて解除しない。
 
 

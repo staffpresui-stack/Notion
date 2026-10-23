@@ -14,6 +14,18 @@ Bは会社Workspace本人が1回登録し自分主催のMeetだけAUTO検出。�
 
 本番Chatwork通知/停止通知はroom451196858へメンションなし、トークンはCHATWORK_TOKEN。test/DRY_RUNは予定ログ。GEMINI_NOTESではLOCAL_CODEXのJSON未着/runner監視を実行しない。本番切替・社員一回設定・無料上限の限界・実機残事項はGEMINI_NOTES_PRODUCTION.md。
 
+## 2026-10-23 管理者収集（本番合格後の追加）
+
+6c9c653の本番B→A→Notion→Chatwork無人通しはユーザー実機合格。①本人登録を残し、②ドメイン全体の委任を既存GAS-Bへ追加する。Aの本番tickは変更しない。専用プロジェクトCではScriptLockを共有できないため、収集用B内のfinance限定関数とする。実機設定は人が行う。
+
+- SA_KEY_JSONのRS256 JWTでfinanceのDirectory/License一覧と、各ユーザーのCalendar/Drive/Docsへ委任。鍵・トークンはログや台帳へ出さない。Directoryだけでライセンスを判定しない。License ManagerのGoogle-Apps割当を照合（apps.licensingはreadonlyスコープが無いためGET以外をコードで禁止）。
+- 会社ドメイン、停止/アーカイブ以外、ライセンス割当あり、メール/OU/部署除外以外。記録機能のないライセンスで添付なしは静かに対象外。個人Gmailは従来tl;dv。
+- 本人主催Meet・直近72時間・終了待ち・非公開/【記録なし】・PRODUCTION_START_ATの規則は①と共通。メモ内文字起こしタブ/別ファイル/待機後notes_onlyも共通。移動は本人の権限であり、委任が共有Drive ACLを迂回することはない。
+- 15分、既定210秒予算、ユーザーごと既定20予定。ユーザー順と固定時間窓のCalendarページ・offsetをENV別に保存し、続きから再開。1ユーザーの失敗で他のユーザーを止めない。Directory/License取得失敗は全体を停止し、未確認を対象にしない。
+- 同じBのScriptLock内で `MOVER_SHARED:{ENV}:...` を共用。既存ready manifestを移行してから②の実行を許可。Aが移動済みでも処理済みとして再移動しない。72時間の走査範囲より長い7日間保持、test/prod別。Driveファイルの公開propertiesにもmeeting_key/ENV/kindを保持。
+- プレビューは設定コピーをDRY_RUNにしてDrive・永続カーソル・共通記録を変更しない。単一ユーザー試験と一括有効化を分離。個別タイマーの自動停止は管理者が明示有効化し、正常な対象者走査と直近の管理者稼働を確認した人だけ。
+- 従来のBマニフェストは変更せず、委任版を別途配布。external_request追加時は再認証が必要になり得る。手順・本番ID・Cloud/管理コンソールの画面・移行・鍵ローテーションは [管理者収集手順](DOMAIN_DELEGATION.md)。
+
 ## テスト環境の無人運転（旧方式）
 
 26bd4d4のユーザー実機通し合格後、ENV=testのまま無人運転へ進めます。BはMOVER_MODE=TEST_EVENT（既定）/AUTO。AUTOは本人主催・Meet付き・終了待機後・終了が直近72時間内の予定を対象、非公開と【記録なし】を除外し、記録が無い予定は静かに無視。録画は任意です。文字起こしがなくメモだけならMOVER_MEMO_WAIT_MIN（既定120分）後にgemini_notesとして利用。Doc/Notion/判定/台帳へ「文字起こしなし・メモから作成」を明記、確信度低で確認へ回します。曖昧なメモは要確認で止め、元データは書き換えません。

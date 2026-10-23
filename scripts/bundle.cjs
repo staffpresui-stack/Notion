@@ -20,5 +20,6 @@ for (const root of ['gas-core', 'gas-organizer']) {
   fs.writeFileSync(path.join(out, 'Code.gs'), source.trimEnd() + '\n');
   if (fs.existsSync(path.join(root, 'src/ui'))) for (const file of fs.readdirSync(path.join(root, 'src/ui'))) if (file.endsWith('.html')) fs.copyFileSync(path.join(root, 'src/ui', file), path.join(out, file));
   fs.copyFileSync(path.join(root, 'appsscript.json'), path.join(out, 'appsscript.json'));
+  if (root === 'gas-organizer') fs.copyFileSync(path.join(root, 'appsscript.delegated.json'), path.join(out, 'appsscript.delegated.json'));
   console.log(out + ' に貼り付け用コードとマニフェストを出力しました。');
 }

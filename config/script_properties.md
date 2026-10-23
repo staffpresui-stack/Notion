@@ -82,3 +82,24 @@ AUTOMATION_ALERT:*は監視の通知重複防止・回復状態を自動保存�
 ## GEMINI_NOTES本番・tl;dv監視
 
 ENV=prod時はFOLDER_INBOX_RAW_ID、NOTION_DB_MINUTES、NOTION_DB_TASKS、PRODUCTION_START_AT、CHATWORK_TOKENが必要。CHATWORK_ROOM_IDは451196858固定。TLDV_CALENDAR_IDSでfinance@へ読取共有した業務カレンダーを設定、TLDV_RECEIVE_TIMEOUT_MINは120（15〜1440分）。無料枠の残数はsettingsのtldv_quota:<アカウントメール>にremaining/checked_atのJSONで登録。APIから自動取得した残数ではありません。CLASSIFICATION_RULES_JSONは部署/会議名キーワードの配列、未指定は6部署の正式名。
+
+## GAS-B 管理者収集（ドメイン全体の委任）
+
+実際の設定値・実行順・委任スコープは [管理者収集手順](../docs/DOMAIN_DELEGATION.md)。通常版マニフェストはそのまま、②を有効化するときだけappsscript.delegated.jsonをGASのappsscript.jsonへ反映。同じ既存B内で動かす。
+
+| キー | 既定 | 用途 |
+|---|---|---|
+| SA_KEY_JSON ★ | 未設定 | サービスアカウントJSON全文。人が入力、保存・表示・共有しない |
+| DWD_CUSTOMER_ID | 未設定 | 管理コンソールのC...お客様ID |
+| MOVER_SHARED_REGISTRY | false | ①②のScriptProperties処理済み記録を共有 |
+| DWD_ENABLED | false | 管理者収集の一括稼働許可。単一ユーザー試験はfalseで可 |
+| DWD_TEST_USER_EMAIL | 未設定 | 1ユーザー試験の会社メール |
+| DWD_EXCLUDE_EMAILS | 空 | 明示除外メール、カンマ/改行区切り |
+| DWD_EXCLUDE_ORG_UNITS | 空 | 除外OUパス（配下も除外） |
+| DWD_EXCLUDE_DEPARTMENTS | 空 | Directoryプロフィールの除外部署名、完全一致 |
+| DWD_ALLOWED_SKUS | 空 | 許可SKU ID、空ならGoogle-Appsの割当あり |
+| DWD_BUDGET_SEC | 210 | 30〜240秒の走査予算 |
+| DWD_EVENTS_PER_USER | 20 | 1〜50、1ユーザーあたり1回の走査件数 |
+| MOVER_RETIRE_PERSONAL_TRIGGERS | false | 正常な管理者走査を確認した人の①タイマーを次回自動停止 |
+
+MOVER_SHARED:* / MOVER_REGISTRY_MIGRATED:* / DWD_REGISTRY_SCRIPT_ID / DWD_CURSOR:* / DWD_NEXT:* / DWD_COVERED:* / DWD_EXCLUDED:* / DWD_LAST_RUN:* は自動管理。コピーやリセットはしない。トークンはScriptCacheのみ。
