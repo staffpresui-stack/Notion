@@ -4,6 +4,7 @@ function moverRun(e){return Organizer_.lock(function(){
   if(e&&e.triggerUid&&String(e.triggerUid)!==registration.trigger_id)throw new Error('登録されているトリガーと一致しません。');
   if(c.MOVER_MODE==='TEST_EVENT'&&!/^[A-Za-z0-9_-]+$/.test(c.MOVER_TEST_EVENT_ID||''))throw new Error('MOVER_TEST_EVENT_IDに実機テスト用予定のIDを設定してください。他の会議は処理しません。');
   if(OrganizerRegistry_.excluded(c,email)){console.log('管理者の除外設定により、この主催者は収集しません。');return [];}
+  if(c.MOVER_DISCOVERY_MODE==='RECORDS'){if(e&&e.triggerUid&&c.DWD_ENABLED==='true'&&c.MOVER_RETIRE_PERSONAL_TRIGGERS==='true'&&OrganizerRegistry_.retire(c,email,registration,OrganizerDrive_.open(c)))return [{status:'管理者収集へ移行済み'}];return RecordDiscovery_.run(c,email).results;}
   var drive=OrganizerDrive_.open(c),user=PropertiesService.getUserProperties(),now=Date.now(),results=[],events=[],token,started=now;
   if(e&&e.triggerUid&&OrganizerRegistry_.retire(c,email,registration,drive))return [{status:'管理者収集へ移行済み'}];
   try{do{var args={timeMin:new Date(now-72*3600000).toISOString(),timeMax:new Date(now).toISOString(),singleEvents:true,showDeleted:false,maxResults:250};if(token)args.pageToken=token;var page=Calendar.Events.list('primary',args);events=events.concat(page.items||[]);token=page.nextPageToken;}while(token&&Date.now()-started<120000);

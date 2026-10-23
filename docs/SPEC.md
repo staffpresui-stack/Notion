@@ -14,6 +14,14 @@ Bは会社Workspace本人が1回登録し自分主催のMeetだけAUTO検出。�
 
 本番Chatwork通知/停止通知はroom451196858へメンションなし、トークンはCHATWORK_TOKEN。test/DRY_RUNは予定ログ。GEMINI_NOTESではLOCAL_CODEXのJSON未着/runner監視を実行しない。本番切替・社員一回設定・無料上限の限界・実機残事項はGEMINI_NOTES_PRODUCTION.md。
 
+## 2026-10-23 即時Meet・記録起点（最新）
+
+管理者委任②はCloud設定待ちで保留。通常の①の本番を維持し、MOVER_DISCOVERY_MODE=RECORDSでDriveのMeet記録を起点に変更。通常版manifest・既存スコープのまま。初回72時間の本人所有Google Meet配下の会議別JSTフォルダを読み戻し、以降Changes差分＋本文生成待ちだけを処理。予定照合は添付ID優先→コード/日時・会議名、複数候補やAPIエラーを「予定なし」にしない。予定ありは旧meeting_key・タイトル・参加者・非公開/記録なし除外を維持。予定なしはinstantコード/日時キー・記録内の明示情報だけ。
+
+本文＋文字起こし本文は60秒の安定、メモのみは180秒の安定を確認してready。固定の予定終了+20分と録画待ちはRECORDSでは使わない。生成中/空本文は待機、録画のみは要確認。Driveから実終了・参加者全員は確定できずend_unknown/participants_incompleteを本文と低確信度へ反映。これは厳密な会議終了API判定ではない。後着成果物はartifact_updateのmanifestで同じキーへ追加し、元manifestと台帳を更新、Doc/Notion/Chatworkを再作成しない。
+
+A/Bは追加の1分トリガーで軽い差分確認。Aは新受信がある時だけ通常の台帳/全案件/Notion処理を呼ぶ。通常15分tickはtl;dv・回復・監視用に残す。実測時間を各90分/日で抑え、超過時は通常経路へ。詳細・既知の限界・クォータ試算・1件限定の17:24会議試験は [記録起点の反映手順](MEET_RECORDS_FAST.md)。GAS実機操作は人が行う。
+
 ## 2026-10-23 管理者収集（本番合格後の追加）
 
 6c9c653の本番B→A→Notion→Chatwork無人通しはユーザー実機合格。①本人登録を残し、②ドメイン全体の委任を既存GAS-Bへ追加する。Aの本番tickは変更しない。専用プロジェクトCではScriptLockを共有できないため、収集用B内のfinance限定関数とする。実機設定は人が行う。

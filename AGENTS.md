@@ -14,6 +14,9 @@
 
 ## 最新のユーザー指定（元の設計より優先）
 
+**2026-10-23さらに追記（本項を以下より優先）**：f3966b0はBコードのみ反映済み、通常manifestの①は正常。②はfinanceの2段階認証・Cloud設定待ちで保留、実機未着手。最優先は予定なし「今すぐ開始」Meetの記録起点取り込みと短間隔化。既存Drive/Docs/CalendarだけのRECORDSモード、Changes差分、本文安定確認、録画後着を追加。予定ありは旧キーと除外を維持、end_unknown/participants_incompleteは明示。厳密な終了時刻をDrive更新日時で捏造しない。A/Bの1分差分トリガーは各90分/日の実測予算、従来15分は維持。実Google/GAS操作は人、Codexは実装・テスト・work push。最新手順は `docs/MEET_RECORDS_FAST.md`。委任や外部AIを今回有効化しない。
+
+
 **2026-10-23追記（6c9c653本番通し合格後）**：管理者のドメイン全体の委任による全Workspaceユーザーの会議収集を追加。実装・ローカル検証・workへのpushのみCodexが実行し、Cloud/管理コンソール/鍵投入/GAS実行は人。同じGAS-Bに追加して①各自登録とScriptLock・共通記録を共有し、GAS-Aの本番tickは変更しない。SA_KEY_JSONは秘密値。DirectoryとLicense ManagerをGET照合して停止・未ライセンス・明示除外を除外。本人操作不要の②と①を併用、個別トリガーの自動停止は正常走査確認後の管理者フラグだけ。通常版manifestは維持し、委任版の追加GASスコープはexternal_requestのみ。設定と再認証の注意は `docs/DOMAIN_DELEGATION.md`。別GAS-Cで同時稼働するとロックを共有できないので禁止。
 
 

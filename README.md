@@ -1,6 +1,8 @@
 # MTG議事録自動化：Codex 用の指示書一式
 
-最新：6c9c653の本番無人通し合格済み。Workspace全社員の本人操作不要の追加方式は[管理者収集手順](docs/DOMAIN_DELEGATION.md)。GAS-Aは変更せず、既存GAS-Bに委任収集を追加します。
+最新：[即時Meet・1分差分監視の反映手順](docs/MEET_RECORDS_FAST.md)。委任②は保留中。今回も通常版マニフェストでA/Bのコードを更新します。
+
+前回まで：6c9c653の本番無人通し合格済み。Workspace全社員の本人操作不要の追加方式は[管理者収集手順](docs/DOMAIN_DELEGATION.md)。委任だけの追加はGAS-B内ですが、今回の即時Meet・短間隔化ではA/B両方のコードを更新します。
 
 現在はfinance@premiere-mode.co.jpのGASと共有ドライブを使います。最新の設定値と実行順は [共有ドライブ実行手順](docs/SHARED_DRIVE_TEST.md) を参照してください。Notionのオーナー・内部インテグレーションはcontact@のままです。
 

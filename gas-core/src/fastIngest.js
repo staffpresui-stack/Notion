@@ -1,0 +1,26 @@
+// 待機中はDriveの差分だけ。Notion・861件の案件・台帳の読み込みは行いません。
+var FastIngest_=(function(){
+  function run(){var c=ServiceConfig_.load(),p=PropertiesService.getScriptProperties(),base='FAST_INGEST:'+c.ENV+':',dry=c.DRY_RUN==='true',token=p.getProperty(base+'token'),queue=JSON.parse(p.getProperty(base+'queue')||'[]'),deadline=Date.now()+30000;
+    function args(){return {driveId:c.SHARED_DRIVE_ID,supportsAllDrives:true,includeItemsFromAllDrives:true};}
+    function candidate(file){if(!file||file.trashed||file.name!=='manifest.json'||(file.properties||{}).minutes_role!=='manifest'||(file.properties||{}).minutes_env!==c.ENV)return;if(!file.parents||file.parents.length!==1)return;var parent=GoogleApi_.get(file.parents[0],{supportsAllDrives:true,fields:'id,parents,trashed,driveId'});if(!parent.trashed&&parent.driveId===c.SHARED_DRIVE_ID&&parent.parents&&parent.parents.length===1&&parent.parents[0]===c.raw&&!queue.includes(file.id)){if(queue.length>=100)throw new Error('短間隔受信が100件を超えました。通常tickで処理してください。');queue.push(file.id);}}
+    if(!token){var initial=GoogleApi_.call('共有Drive差分開始',function(){return Drive.Changes.getStartPageToken({driveId:c.SHARED_DRIVE_ID,supportsAllDrives:true,fields:'startPageToken'});}).startPageToken,t;do{var opt=Object.assign(args(),{corpora:'drive',q:"trashed=false and modifiedTime > '"+new Date(Date.now()-72*3600000).toISOString()+"' and name='manifest.json' and properties has { key='minutes_role' and value='manifest' } and properties has { key='minutes_env' and value='"+c.ENV+"' }",pageSize:100,fields:'nextPageToken,files(id,name,parents,properties,trashed)'});if(t)opt.pageToken=t;var page=GoogleApi_.list(opt);(page.files||[]).forEach(candidate);t=page.nextPageToken;if(Date.now()>deadline&&t)throw new Error('初回の受信走査は次回やり直します。');}while(t);token=initial;}
+    else{var t=token;do{var opt=Object.assign(args(),{pageToken:t,pageSize:100,fields:'nextPageToken,newStartPageToken,changes(removed,file(id,name,parents,properties,trashed))'}),page=GoogleApi_.call('共有Drive差分確認',function(){return Drive.Changes.list(opt);});(page.changes||[]).forEach(function(ch){if(!ch.removed)candidate(ch.file);});t=page.nextPageToken;token=t||page.newStartPageToken||token;}while(t&&Date.now()<deadline);}
+    // 先に受信キューを保存してから差分位置を進めます。異常時にも再発見できます。
+    if(!dry){p.setProperty(base+'queue',JSON.stringify(queue));p.setProperty(base+'token',token);}
+    function waiting(id){try{var f=GoogleApi_.get(id,{supportsAllDrives:true,fields:'id,name,parents,trashed,properties'});var before=queue;queue=[];candidate(f);var found=queue.includes(id);queue=before;return found;}catch(e){throw new Error('受信キューの所在を確認できません。再試行します。');}}
+    queue=queue.filter(waiting);if(!dry)p.setProperty(base+'queue',JSON.stringify(queue));
+    if(!queue.length)return {status:'新しい受信なし'};
+    if(Number(p.getProperty(base+'retry_after')||0)>Date.now())return {status:'前回エラーの再確認待ち',pending:queue.length};
+    if(dry){console.log('短間隔で議事録を作成する予定：'+queue.length+'件');return {dryRun:true,pending:queue.length};}
+    // 処理結果が要対応なら5分間隔で再試行し、失敗で1分ごとに重い照会を繰り返しません。
+    try{var result=NotesPipeline_.run();queue=queue.filter(waiting);p.setProperty(base+'queue',JSON.stringify(queue));if(queue.length)p.setProperty(base+'retry_after',String(Date.now()+5*60000));else p.deleteProperty(base+'retry_after');return result;}
+    catch(e){p.setProperty(base+'retry_after',String(Date.now()+5*60000));throw e;}
+  }
+  return {run:run};
+})();
+function fastNotesTick_(){if(String(Session.getEffectiveUser().getEmail()||'').toLowerCase()!=='finance@premiere-mode.co.jp')throw new Error('短間隔取り込みはfinance@専用です。');var c=ServiceConfig_.load();return FastBudget_.run(c,'finance@premiere-mode.co.jp','A',function(){return Ledger_.withLock(FastIngest_.run);});}
+function setupFastNotesTrigger(){assertFinanceOperator_();return Ledger_.withLock(function(){var c=ServiceConfig_.load(),own=ScriptApp.getProjectTriggers().filter(function(t){return t.getHandlerFunction()==='fastNotesTick_';});if(c.DRY_RUN==='true'){console.log('受信差分の1分トリガーを作る予定です。通常の15分tickは残します。');return;}while(own.length>1)ScriptApp.deleteTrigger(own.pop());if(!own.length)ScriptApp.newTrigger('fastNotesTick_').timeBased().everyMinutes(1).create();console.log('受信差分の1分トリガーを設定しました。');});}
+function removeFastNotesTrigger(){assertFinanceOperator_();var c=ServiceConfig_.load();if(c.DRY_RUN==='true'){console.log('受信差分の1分トリガーを解除する予定です。');return;}ScriptApp.getProjectTriggers().filter(function(t){return t.getHandlerFunction()==='fastNotesTick_';}).forEach(function(t){ScriptApp.deleteTrigger(t);});}
+function previewFastNotes(){assertFinanceOperator_();var original=ServiceConfig_.load;try{ServiceConfig_.load=function(){return Object.assign({},original(),{DRY_RUN:'true'});};return Ledger_.withLock(FastIngest_.run);}finally{ServiceConfig_.load=original;}}
+
+function checkFastNotesStatus(){assertFinanceOperator_();var c=ServiceConfig_.load(),p=PropertiesService.getScriptProperties(),raw=p.getProperty('FAST_BUDGET:'+c.ENV+':A:finance@premiere-mode.co.jp'),value={env:c.ENV,pending:JSON.parse(p.getProperty('FAST_INGEST:'+c.ENV+':queue')||'[]').length,metrics:raw?JSON.parse(raw):null};console.log('短間隔受信監視：'+JSON.stringify(value));return value;}

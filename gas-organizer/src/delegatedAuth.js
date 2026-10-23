@@ -35,6 +35,10 @@ var DelegatedAuth_=(function(){
       get:function(id,args){return get(email,'user',url+encodeURIComponent(id),args);},
       list:function(args){return get(email,'user',url.slice(0,-1),args);},
       docsGet:function(id,args){return get(email,'user','https://docs.googleapis.com/v1/documents/'+encodeURIComponent(id),args);},
+      calendarList:function(args){return get(email,'user','https://www.googleapis.com/calendar/v3/calendars/primary/events',args);},
+      changesStart:function(){return get(email,'user','https://www.googleapis.com/drive/v3/changes/startPageToken',{fields:'startPageToken'});},
+      changes:function(args){return get(email,'user','https://www.googleapis.com/drive/v3/changes',args);},
+      readJSON:function(id){return get(email,'user',url+encodeURIComponent(id),{alt:'media',supportsAllDrives:true});},
       create:GoogleApi_.create,
       update:function(body,id,blob,args){
         if(!args.addParents&&!args.removeParents)return GoogleApi_.update(body,id,blob,args);

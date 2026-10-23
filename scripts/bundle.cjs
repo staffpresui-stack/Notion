@@ -12,6 +12,7 @@ fs.writeFileSync('gas-core/src/notionFixtures.generated.js',
 fs.writeFileSync('gas-core/src/inboxSchema.generated.js', '// schemas/inbox_judgement.schema.jsonから生成します。\nvar InboxJudgementSchema_ = ' + fs.readFileSync('schemas/inbox_judgement.schema.json', 'utf8').trim() + ';\n');
 for (const root of ['gas-core', 'gas-organizer']) {
   fs.writeFileSync(path.join(root, 'src/googleApi.generated.js'), '// shared/googleApi.jsから生成します。\n' + fs.readFileSync('shared/googleApi.js', 'utf8'));
+  fs.writeFileSync(path.join(root,'src/fastBudget.generated.js'),'// shared/fastBudget.jsから生成します。\n'+fs.readFileSync('shared/fastBudget.js','utf8'));
   const source = fs.readdirSync(path.join(root, 'src')).filter(f => f.endsWith('.js')).sort()
     .map(file => '// ' + file + '\n' + fs.readFileSync(path.join(root, 'src', file), 'utf8')).join('\n\n');
   new vm.Script(source, { filename: root + '/Code.gs' });

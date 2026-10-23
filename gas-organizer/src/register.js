@@ -19,6 +19,7 @@ var OrganizerRegistration_=(function(){
     }else{
       s.registered=false;s.trigger_id='';s.registered_at='';s.last_result='登録解除';save(s);own.forEach(function(t){ScriptApp.deleteTrigger(t);});receipt(c,drive,email,s);
     }
+    if(c.MOVER_DISCOVERY_MODE==='RECORDS'){var fast=ScriptApp.getProjectTriggers().filter(function(t){return t.getHandlerFunction()==='recordMoverTick_';});if(enabled&&!fast.length)ScriptApp.newTrigger('recordMoverTick_').timeBased().everyMinutes(1).create();if(!enabled)fast.forEach(function(t){ScriptApp.deleteTrigger(t);});}
     return {message:enabled?'登録しました。主催者本人の権限で定期実行します。':'登録を解除しました。',registered:enabled};
   });}
   return {state:state,save:save,receipt:receipt,triggers:triggers,change:change};

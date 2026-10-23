@@ -103,3 +103,16 @@ ENV=prod時はFOLDER_INBOX_RAW_ID、NOTION_DB_MINUTES、NOTION_DB_TASKS、PRODUC
 | MOVER_RETIRE_PERSONAL_TRIGGERS | false | 正常な管理者走査を確認した人の①タイマーを次回自動停止 |
 
 MOVER_SHARED:* / MOVER_REGISTRY_MIGRATED:* / DWD_REGISTRY_SCRIPT_ID / DWD_CURSOR:* / DWD_NEXT:* / DWD_COVERED:* / DWD_EXCLUDED:* / DWD_LAST_RUN:* は自動管理。コピーやリセットはしない。トークンはScriptCacheのみ。
+
+## 記録起点と1分差分（最新、委任は保留）
+
+手順は [即時Meet・短間隔](../docs/MEET_RECORDS_FAST.md)。A/Bは通常版manifestのまま、既存の本番ID・DRY_RUN=falseを維持。プレビュー関数は設定コピーをDRY_RUNにする。
+
+| Bのキー | 初回 | 説明 |
+|---|---|---|
+| MOVER_DISCOVERY_MODE | RECORDS | 記録起点。未設定/CALENDARは旧経路 |
+| MOVER_SHARED_REGISTRY | true | 旧キーと記録起点・将来の委任の処理済みを共有 |
+| RECORD_TEST_ONLY | true→合格後false | 定期処理も最初の1会議だけに制限 |
+| RECORD_TEST_MEET_CODE | szo-aepv-eqp | 初回確認の17:24のMeet。単一試験関数もこの値を使う |
+
+Aへ追加の必須プロパティは無い。自動管理のRECORDS:*は本人/ENV別の差分token・候補・安定ハッシュ・格納済みリンク。FAST_INGEST:*はAの差分token・受信キュー・再試行待ち。FAST_BUDGET:*はJST日次の実測時間/回数（90分/日/側）。NOTES_LATE:*は後着の完了記録。いずれも手でコピー・削除しない。SA_KEY_JSON等は今回不要。

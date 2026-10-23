@@ -184,6 +184,41 @@ function setupRefExportTrigger(){assertFinanceOperator_();return Ledger_.withLoc
 function removeRefExportTrigger(){assertFinanceOperator_();return Ledger_.withLock(function(){var c=Stage2Drive_.config();if(c.DRY_RUN==='true'){console.log('自分の参照更新トリガーだけを解除する予定です。');return;}ScriptApp.getProjectTriggers().filter(function(t){return t.getHandlerFunction()==='refExportTick_';}).forEach(function(t){ScriptApp.deleteTrigger(t);});console.log('自分の参照更新トリガーを解除しました。');});}
 
 
+// fastBudget.generated.js
+// shared/fastBudget.jsから生成します。
+// 1分トリガーの実測時間を日次管理します。Workspaceの全プロジェクト合計6時間とは別の保守的な枠です。
+var FastBudget_={run:function(c,email,kind,fn){var p=PropertiesService.getScriptProperties(),day=new Date(Date.now()+9*3600000).toISOString().slice(0,10),key='FAST_BUDGET:'+c.ENV+':'+kind+':'+email,raw=p.getProperty(key),v=raw?JSON.parse(raw):{};if(v.day!==day)v={day:day,ms:0,runs:0};if(v.ms>=90*60000)return {status:'短間隔の本日予算に達しました。通常トリガーを継続します。'};var start=Date.now();try{return fn();}finally{v.ms+=Math.max(0,Date.now()-start);v.runs++;if(c.DRY_RUN==='false')p.setProperty(key,JSON.stringify(v));}}};
+
+
+// fastIngest.js
+// 待機中はDriveの差分だけ。Notion・861件の案件・台帳の読み込みは行いません。
+var FastIngest_=(function(){
+  function run(){var c=ServiceConfig_.load(),p=PropertiesService.getScriptProperties(),base='FAST_INGEST:'+c.ENV+':',dry=c.DRY_RUN==='true',token=p.getProperty(base+'token'),queue=JSON.parse(p.getProperty(base+'queue')||'[]'),deadline=Date.now()+30000;
+    function args(){return {driveId:c.SHARED_DRIVE_ID,supportsAllDrives:true,includeItemsFromAllDrives:true};}
+    function candidate(file){if(!file||file.trashed||file.name!=='manifest.json'||(file.properties||{}).minutes_role!=='manifest'||(file.properties||{}).minutes_env!==c.ENV)return;if(!file.parents||file.parents.length!==1)return;var parent=GoogleApi_.get(file.parents[0],{supportsAllDrives:true,fields:'id,parents,trashed,driveId'});if(!parent.trashed&&parent.driveId===c.SHARED_DRIVE_ID&&parent.parents&&parent.parents.length===1&&parent.parents[0]===c.raw&&!queue.includes(file.id)){if(queue.length>=100)throw new Error('短間隔受信が100件を超えました。通常tickで処理してください。');queue.push(file.id);}}
+    if(!token){var initial=GoogleApi_.call('共有Drive差分開始',function(){return Drive.Changes.getStartPageToken({driveId:c.SHARED_DRIVE_ID,supportsAllDrives:true,fields:'startPageToken'});}).startPageToken,t;do{var opt=Object.assign(args(),{corpora:'drive',q:"trashed=false and modifiedTime > '"+new Date(Date.now()-72*3600000).toISOString()+"' and name='manifest.json' and properties has { key='minutes_role' and value='manifest' } and properties has { key='minutes_env' and value='"+c.ENV+"' }",pageSize:100,fields:'nextPageToken,files(id,name,parents,properties,trashed)'});if(t)opt.pageToken=t;var page=GoogleApi_.list(opt);(page.files||[]).forEach(candidate);t=page.nextPageToken;if(Date.now()>deadline&&t)throw new Error('初回の受信走査は次回やり直します。');}while(t);token=initial;}
+    else{var t=token;do{var opt=Object.assign(args(),{pageToken:t,pageSize:100,fields:'nextPageToken,newStartPageToken,changes(removed,file(id,name,parents,properties,trashed))'}),page=GoogleApi_.call('共有Drive差分確認',function(){return Drive.Changes.list(opt);});(page.changes||[]).forEach(function(ch){if(!ch.removed)candidate(ch.file);});t=page.nextPageToken;token=t||page.newStartPageToken||token;}while(t&&Date.now()<deadline);}
+    // 先に受信キューを保存してから差分位置を進めます。異常時にも再発見できます。
+    if(!dry){p.setProperty(base+'queue',JSON.stringify(queue));p.setProperty(base+'token',token);}
+    function waiting(id){try{var f=GoogleApi_.get(id,{supportsAllDrives:true,fields:'id,name,parents,trashed,properties'});var before=queue;queue=[];candidate(f);var found=queue.includes(id);queue=before;return found;}catch(e){throw new Error('受信キューの所在を確認できません。再試行します。');}}
+    queue=queue.filter(waiting);if(!dry)p.setProperty(base+'queue',JSON.stringify(queue));
+    if(!queue.length)return {status:'新しい受信なし'};
+    if(Number(p.getProperty(base+'retry_after')||0)>Date.now())return {status:'前回エラーの再確認待ち',pending:queue.length};
+    if(dry){console.log('短間隔で議事録を作成する予定：'+queue.length+'件');return {dryRun:true,pending:queue.length};}
+    // 処理結果が要対応なら5分間隔で再試行し、失敗で1分ごとに重い照会を繰り返しません。
+    try{var result=NotesPipeline_.run();queue=queue.filter(waiting);p.setProperty(base+'queue',JSON.stringify(queue));if(queue.length)p.setProperty(base+'retry_after',String(Date.now()+5*60000));else p.deleteProperty(base+'retry_after');return result;}
+    catch(e){p.setProperty(base+'retry_after',String(Date.now()+5*60000));throw e;}
+  }
+  return {run:run};
+})();
+function fastNotesTick_(){if(String(Session.getEffectiveUser().getEmail()||'').toLowerCase()!=='finance@premiere-mode.co.jp')throw new Error('短間隔取り込みはfinance@専用です。');var c=ServiceConfig_.load();return FastBudget_.run(c,'finance@premiere-mode.co.jp','A',function(){return Ledger_.withLock(FastIngest_.run);});}
+function setupFastNotesTrigger(){assertFinanceOperator_();return Ledger_.withLock(function(){var c=ServiceConfig_.load(),own=ScriptApp.getProjectTriggers().filter(function(t){return t.getHandlerFunction()==='fastNotesTick_';});if(c.DRY_RUN==='true'){console.log('受信差分の1分トリガーを作る予定です。通常の15分tickは残します。');return;}while(own.length>1)ScriptApp.deleteTrigger(own.pop());if(!own.length)ScriptApp.newTrigger('fastNotesTick_').timeBased().everyMinutes(1).create();console.log('受信差分の1分トリガーを設定しました。');});}
+function removeFastNotesTrigger(){assertFinanceOperator_();var c=ServiceConfig_.load();if(c.DRY_RUN==='true'){console.log('受信差分の1分トリガーを解除する予定です。');return;}ScriptApp.getProjectTriggers().filter(function(t){return t.getHandlerFunction()==='fastNotesTick_';}).forEach(function(t){ScriptApp.deleteTrigger(t);});}
+function previewFastNotes(){assertFinanceOperator_();var original=ServiceConfig_.load;try{ServiceConfig_.load=function(){return Object.assign({},original(),{DRY_RUN:'true'});};return Ledger_.withLock(FastIngest_.run);}finally{ServiceConfig_.load=original;}}
+
+function checkFastNotesStatus(){assertFinanceOperator_();var c=ServiceConfig_.load(),p=PropertiesService.getScriptProperties(),raw=p.getProperty('FAST_BUDGET:'+c.ENV+':A:finance@premiere-mode.co.jp'),value={env:c.ENV,pending:JSON.parse(p.getProperty('FAST_INGEST:'+c.ENV+':queue')||'[]').length,metrics:raw?JSON.parse(raw):null};console.log('短間隔受信監視：'+JSON.stringify(value));return value;}
+
+
 // googleApi.generated.js
 // shared/googleApi.jsから生成します。
 // Advanced Servicesの一時障害だけを再試行します。本文・ID・エラー原文はログに出しません。
@@ -830,6 +865,19 @@ var MeetingRules_ = (function () {
 })();
 
 
+// notesLate.js
+// 後着した録画等は同じ議事録の会議フォルダへ追加。Notion/Chatworkは再作成・再送しません。
+var NotesLate_={ingest:function(x,m,folder){var row=x.ledger.rows('minutes').find(function(r){return r.meeting_key===m.meeting_key;}),s=NotesPipeline_.steps(row);if(!row||!s.finished||s.env!==x.c.ENV||!row.meeting_folder_id)throw new Error('元議事録の完了・同環境の格納先を確認できません。');var files=m.files||{},raw=JSON.parse(row.raw_file_ids_json||'{}');x.drive.within(row.meeting_folder_id);Object.keys(files).forEach(function(k){var f=x.drive.within(files[k]);if(!f.parents.some(function(p){return [folder.id,row.meeting_folder_id].includes(p);}))throw new Error('後着ファイルの親が違います。');if(raw[k]&&raw[k]!==f.id)throw new Error('同じ種類の記録が既にあります。自動上書きしません。');});
+  if(x.c.DRY_RUN==='true'){x.ledger.log('後着ファイルの移動予定',m.meeting_key,files);return {dryRun:true,key:m.meeting_key};}
+  Object.keys(files).forEach(function(k){x.drive.move(files[k],row.meeting_folder_id,k,m.meeting_key);raw[k]=files[k];});
+  if(s.manifestId){x.drive.within(s.manifestId);var original=x.drive.readJSON(s.manifestId);if(original.meeting_key!==m.meeting_key)throw new Error('元manifestの会議キーが違います。');original.files=Object.assign({},original.files,files);original.missing=(original.missing||[]).filter(function(k){return !files[k];});GoogleApi_.update({},s.manifestId,Utilities.newBlob(JSON.stringify(original,null,2),'application/json','manifest.json'),{supportsAllDrives:true,fields:'id'});}
+  row.raw_file_ids_json=JSON.stringify(raw);x.ledger.save(row);
+  // 受け渡しmanifestを残し、完了印で重複ログを防ぎます。別の名前なので元manifestとは重複しません。
+  var marker='NOTES_LATE:'+x.c.ENV+':'+folder.id,props=PropertiesService.getScriptProperties();if(!props.getProperty(marker)){x.ledger.append('change_log',{change_id:Utilities.getUuid(),at:new Date().toISOString(),meeting_key:m.meeting_key,kind:'後着ファイル追加',after_json:JSON.stringify(files),actor:'GAS-A',result:'完了'});props.setProperty(marker,String(Date.now()));Object.keys(props.getProperties()).filter(function(k){return k.startsWith('NOTES_LATE:'+x.c.ENV+':')&&Number(props.getProperty(k))<Date.now()-7*86400000;}).forEach(function(k){props.deleteProperty(k);});}
+  x.drive.children(folder.id).filter(function(f){return f.name==='manifest.json';}).forEach(function(f){var current=x.drive.within(f.id);GoogleApi_.update({name:'artifact_update_'+folder.id+'.json',appProperties:Object.assign({},current.appProperties||{},{kind:'artifact_update',meeting_key:m.meeting_key})},f.id,null,{supportsAllDrives:true,addParents:row.meeting_folder_id,removeParents:folder.id,fields:'id'});});var empty=x.drive.folder(x.drive.folder(x.c.prod?x.c.SHARED_DRIVE_ID:x.drive.root.id,'99_対象外',false).id,'_空',false);x.drive.move(folder.id,empty.id,'empty',m.meeting_key);return {key:m.meeting_key,status:'後着ファイル追加済み'};
+}};
+
+
 // notesPipeline.js
 var NotesPipeline_=(function(){
   function context(){var c=ServiceConfig_.load(),drive=ServiceDrive_.open(c);drive.within(c.LEDGER_SPREADSHEET_ID);var ledger=Stage2Ledger_.open(SpreadsheetApp.openById(c.LEDGER_SPREADSHEET_ID),true),notion=ServiceNotion_.open(c),minutes=notion.schema(c.minutes),tasks=notion.schema(c.tasks),inboxSchema=notion.schema(c.NOTION_DB_TLDV_INBOX);
@@ -881,7 +929,7 @@ var NotesPipeline_=(function(){
     try{x=context();c=x.c;}catch(preflightError){try{var config=ServiceConfig_.load(),scopedDrive=ServiceDrive_.open(config);scopedDrive.within(config.LEDGER_SPREADSHEET_ID);var book=Stage2Ledger_.open(SpreadsheetApp.openById(config.LEDGER_SPREADSHEET_ID),true);notifyError({c:config,ledger:book},'pipeline-preflight','GASの接続確認が失敗しました。Notion・権限・項目構成・実行履歴を確認してください。');}catch(ignore){console.log('接続監視の記録/通知も失敗しました。finance@のトリガー失敗メールを確認してください。');}throw preflightError;}
     resolveAlert(x,'pipeline-preflight');
     function process(source){if(Date.now()>deadline||count>=c.INGEST_BATCH)return;var key=source.manifest.meeting_key;if(seen[key])return;seen[key]=true;var prior=x.ledger.rows('minutes').find(function(r){return r.meeting_key===key;}),priorSteps=steps(prior);if(priorSteps.finished||prior&&priorSteps.workflow!=='GEMINI_NOTES'&&prior.notion_page_id)return;if(priorSteps.notion==='pending'||priorSteps.appendPending||priorSteps.chatwork==='pending'){notifyError(x,key,'書き込み結果が不明です。Notion/Chatworkの実データを確認するまで再送しません。');return;}try{if(priorSteps.sourceId)source=x.drive.readJSON(priorSteps.sourceId);result.push(ingest(x,source,deadline));count++;}catch(e){notifyError(x,key,'取り込みに失敗しました。接続・項目構成・本文変更・作成結果不明をGASの実行履歴で確認してください。');console.log('GEMINI_NOTES処理エラー：'+key+'／'+String(e.message).split(c.NOTION_TOKEN).join('[非表示]'));result.push({key:key,status:'要対応'});count++;}}
-    x.drive.children(x.raw.id).filter(function(f){return f.mimeType==='application/vnd.google-apps.folder';}).forEach(function(folder){if(Date.now()>deadline||count>=c.INGEST_BATCH)return;try{var files=x.drive.children(folder.id).filter(function(f){return f.name==='manifest.json';});if(files.length!==1)return;var m=x.drive.readJSON(files[0].id);if(m.status!=='ready'||m.source!=='meet'||c.prod&&Date.parse(m.start)<Date.parse(c.PRODUCTION_START_AT))return;meetings.push(m);var known=x.ledger.rows('minutes').find(function(r){return r.meeting_key===m.meeting_key;}),state=steps(known);if(state.finished)return;var src=state.sourceId?x.drive.readJSON(state.sourceId):NotesSources_.meet(m,folder,x.drive);resolveAlert(x,folder.name);process(src);}catch(e){notifyError(x,folder.name,'Meetのメモ・文字起こし・manifestを読み取れません。');}});
+    x.drive.children(x.raw.id).filter(function(f){return f.mimeType==='application/vnd.google-apps.folder';}).forEach(function(folder){if(Date.now()>deadline||count>=c.INGEST_BATCH)return;try{var files=x.drive.children(folder.id).filter(function(f){return f.name==='manifest.json';});if(files.length!==1)return;var m=x.drive.readJSON(files[0].id);if(m.status!=='ready'||m.source!=='meet'||c.prod&&Date.parse(m.start)<Date.parse(c.PRODUCTION_START_AT))return;if(m.artifact_update){result.push(NotesLate_.ingest(x,m,folder));count++;return;}meetings.push(m);var known=x.ledger.rows('minutes').find(function(r){return r.meeting_key===m.meeting_key;}),state=steps(known);if(state.finished)return;var src=state.sourceId?x.drive.readJSON(state.sourceId):NotesSources_.meet(m,folder,x.drive);resolveAlert(x,folder.name);process(src);}catch(e){notifyError(x,folder.name,'Meetのメモ・文字起こし・manifestを読み取れません。');}});
     x.ledger.rows('minutes').filter(function(r){var s=steps(r);return s.workflow==='GEMINI_NOTES'&&s.env===c.ENV&&!s.finished&&s.sourceId;}).forEach(function(r){if(Date.now()>deadline||count>=c.INGEST_BATCH)return;var snapshot=x.drive.readJSON(steps(r).sourceId);if(snapshot.manifest.meeting_key!==r.meeting_key)throw new Error('保存した会議のキーが違います。');process(snapshot);});
     x.ledger.rows('minutes').filter(function(r){return r.source==='meet'&&r.status!=='対象外';}).forEach(function(r){meetings.push({source:'meet',title:r.title,start:r.event_start,attendees:JSON.parse(r.attendees_json||'[]'),meeting_key:r.meeting_key});});
     var filter={or:[{property:'取り込み状態',select:{equals:'未処理'}},{property:'取り込み状態',select:{is_empty:true}}]};if(c.prod)filter={and:[filter,{property:'日付',date:{on_or_after:c.PRODUCTION_START_AT.slice(0,10)}}]};
@@ -915,6 +963,7 @@ var NotesPlan_=(function(){
     if(!m||!/^(meet|tldv):[A-Za-z0-9_-]+$/.test(m.meeting_key||'')||!Number.isFinite(Date.parse(m.start)))throw new Error('会議キー・日時を確認してください。');
     notes=String(notes||'').trim();transcript=String(transcript||'').trim();if(!notes&&!transcript)throw new Error('AIメモも文字起こしもありません。リンクだけのページは処理できません。');if(notes.length+transcript.length>200000)throw new Error('本文が上限を超えました。省略せず停止します。');
     var master=masters(input),rule=MeetingRules_.classify(m.attendees,master),questions=[],scope=rule.scope||'社外',matches=[];
+    if(m.end_unknown)questions.push('実際の終了時刻は不明です。Driveの本文安定を確認して作成しました（終了の確定ではありません）。');if(m.participants_incomplete)questions.push('予定なしMeetの参加者はメモに明記された範囲です。参加者全員を確認してください。');
     if(m.time_unknown)questions.push('会議の時刻が不明です。日付だけを転記しています。');if(m.source==='tldv'&&!m.end)questions.push('会議の終了時刻/長さを確認してください。');
     if(rule.incomplete)questions.push('参加者メールが不足しています。社内/社外と確認者を確認してください。');
     var keywordRules=rules||domains.map(function(d){return {domain:d,terms:[d]};});
@@ -926,7 +975,7 @@ var NotesPlan_=(function(){
     var related=(projects||[]).filter(function(p){return p.title&&p.title.length>=4&&String(m.title||'').includes(p.title);}).map(function(p){return p.id;});
     if(!related.length)questions.push('関連プロジェクトはタイトル完全一致の根拠がなく未設定です。');
     var notesOnly=!transcript;if(notesOnly)questions.push('文字起こしなし・メモから作成');if(!notes)questions.push('AIメモがありません。新たな要約は行わず文字起こしを転記します。');
-    var sensitive=/人事|評価|健康|給与|採用|経営|機密/.test(String(m.title||'')+'\n'+notes),confidence=m.time_unknown||m.source==='tldv'&&!m.end||rule.incomplete||!matches.length||scope==='社外'&&!rule.client||notesOnly||!notes?'低':'高';
+    var sensitive=/人事|評価|健康|給与|採用|経営|機密/.test(String(m.title||'')+'\n'+notes),confidence=m.end_unknown||m.participants_incomplete||m.time_unknown||m.source==='tldv'&&!m.end||rule.incomplete||!matches.length||scope==='社外'&&!rule.client||notesOnly||!notes?'低':'高';
     var date=new Date(Date.parse(m.start)+9*3600000).toISOString().slice(0,10),title=date+' '+String(m.title||'会議'),decisions=section(notes,/^決定事項$/),actions=section(notes,/^(推奨される次のステップ|次のステップ|ネクストアクション|Next steps|Action items)$/i);
     var markdown='## 基本情報\n- 日時：'+m.start+(m.time_unknown?'（日付のみ・時刻要確認）':'')+'\n- 記録元：'+(m.source==='meet'?'Meet / Gemini':'tl;dv')+'\n- 参加者：'+(m.attendees||[]).map(function(p){return p.name||p.email||'要確認';}).join('、')+'\n- 作成方式：既存AIメモの転記・ルール判定（追加のAI要約なし）\n'+(notesOnly?'- 文字起こしなし・メモから作成\n':'')+'\n## AIメモ（提供元の内容）\n'+(notes||'AIメモはありません。')+'\n\n## 決定事項\n'+(decisions.length?decisions.map(function(s){return '- '+s;}).join('\n'):'- 提供元メモで決定事項を明示できません。要確認。')+'\n\n## ネクストアクション\n'+(actions.length?actions.map(function(s){return '- '+s;}).join('\n'):'- 提供元メモを確認してください。担当・期日は補完していません。')+'\n\n## 要確認\n'+(questions.length?questions.map(function(q){return '- '+q;}).join('\n'):'- 内容の確認をお願いします。')+(transcript?'\n\n## 文字起こし（提供元の原文）\n'+transcript:'');
     return {meeting_key:m.meeting_key,source:m.source,scope:scope,placement:placement,domains:matches,related_project_ids:related,minutes_title:title,minutes_doc_id:null,minutes_markdown:markdown,confidence:confidence,reason:(confidence==='高'?'登録マスタ・会議名の明示キーワードで判定しました。':'一意に決められない項目があり、仕分け待ちで確認が必要です。')+(notesOnly?'文字起こしなし・メモから作成。':''),sensitive:sensitive,summary:{decisions:decisions,next_actions:actions.map(function(s){return {who:'要確認',what:s,due:null};})},task_proposals:[],open_questions:questions};
